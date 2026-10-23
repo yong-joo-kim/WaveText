@@ -17,3 +17,6 @@ docs/reference/ui-guideline/*.pdf
 
 # 참고 화면(GoldWave 캡처, PC 경로·내부 IP 포함)은 이 PC에만 보관
 docs/reference/ui-screens/
+
+# 대화 기록(내부 서버 주소·경로 포함)은 이 PC에만 보관
+docs/대화기록/
