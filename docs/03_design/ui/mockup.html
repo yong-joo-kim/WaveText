@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WaveText 화면 시안</title>
+<style>
+  /* KRDS(디지털 정부서비스 UI/UX 가이드라인 2025.08) 표준형 스타일 기준
+     - 색상: 프리미티브 팔레트(p81~91) → 시멘틱 토큰
+     - 서체: Pretendard GOV, regular 400 / bold 700, 줄 간격 150%, 본문 17px(최소 16px)
+     - 형태: radius xsmall 2 / small 4 / medium 6(버튼·입력) / large 10(카드) / xlarge 12(모달)
+     - 간격: 8-point grid (4, 8, 16, 24) */
+  :root {
+    /* 프리미티브 */
+    --primary-5: #ecf2fe; --primary-10: #d8e5fd; --primary-20: #b1cefb; --primary-50: #256ef4; --primary-60: #0b50d0; --primary-70: #083891;
+    --secondary-5: #eef2f7; --secondary-10: #d6e0eb; --secondary-50: #346fb2; --secondary-70: #063a74;
+    --gray-0: #ffffff; --gray-5: #f4f5f6; --gray-10: #e6e8ea; --gray-20: #cdd1d5; --gray-30: #b1b8be; --gray-40: #8a949e;
+    --gray-50: #6d7882; --gray-60: #58616a; --gray-70: #464c53; --gray-90: #1e2124;
+    --danger-5: #fdefec; --danger-10: #fcdfd9; --danger-50: #de3412; --danger-60: #bd2c0f;
+    --warning-5: #fff3db; --warning-10: #ffdfa2; --warning-30: #ffb114; --warning-60: #8a5c00;
+    --success-5: #eaf6ec; --success-10: #d8efdd; --success-60: #267337;
+    --info-5: #e7f4fe; --info-10: #d3ebfd; --info-60: #096ab3;
+
+    /* 시멘틱 */
+    --surface-bg: var(--gray-5);          /* elevation -1 */
+    --surface: var(--gray-0);             /* elevation 0 */
+    --surface-sub: var(--secondary-5);    /* 패널 머리, 보조 표면 */
+    --border: var(--gray-20);
+    --border-light: var(--gray-10);
+    --border-input: var(--gray-50);       /* 매직넘버 50 */
+    --text: var(--gray-90);               /* 본문 */
+    --text-sub: var(--gray-70);
+    --muted: var(--gray-60);              /* 보조 글자, 4.5:1 이상 */
+    --accent: var(--primary-50);
+    --accent-hover: var(--primary-60);
+    --accent-press: var(--primary-70);
+    --accent-2: var(--primary-5);
+    --focus: var(--primary-50);
+
+    /* 파형 (그래픽 색상) */
+    --wave-bg: var(--gray-0);
+    --wave-grid: var(--gray-10);
+    --wave-grid-mid: var(--gray-20);
+    --wave-zero: var(--gray-40);
+    --wave-label: var(--gray-60);
+    --wave: var(--primary-50);
+    --sel-bg: rgba(37, 110, 244, 0.10);
+    --mark: var(--warning-30);            /* 파랑과 구분되는 황색, 적록 조합 회피 */
+    --play: var(--gray-90);               /* 재생 위치: 색 대신 진한 선 */
+    --lcd-bg: var(--secondary-5);
+    --lcd: var(--secondary-70);
+
+    --ok: var(--success-60); --warn: var(--warning-60);
+
+    --r-xs: 2px; --r-sm: 4px; --r-md: 6px; --r-lg: 10px; --r-xl: 12px;
+    --shadow-1: 0 1px 2px rgba(0,0,0,.06), 0 0 1px rgba(0,0,0,.08);
+    --shadow-2: 0 2px 6px rgba(0,0,0,.10);
+    --shadow-3: 0 4px 12px rgba(0,0,0,.12);
+    --shadow-4: 0 8px 24px rgba(0,0,0,.18);
+    --font: "Pretendard GOV", "Pretendard", "Malgun Gothic", "맑은 고딕", system-ui, sans-serif;
+    --mono: "D2Coding", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--surface-bg);
+    color: var(--text);
+    font: 400 15px/1.5 var(--font);
+    display: flex; flex-direction: column; overflow: hidden;
+    min-width: 1440px;
+  }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  a { color: var(--accent); }
+
+  /* 제목줄·메뉴 */
+  .titlebar { height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--border-light); }
+  .titlebar .logo { width: 18px; height: 18px; border-radius: var(--r-sm); background: var(--primary-50); }
+  .titlebar .path { color: var(--muted); font-size: 13px; }
+  .menubar { height: 36px; display: flex; align-items: center; padding: 0 8px; background: var(--surface); border-bottom: 1px solid var(--border); position: relative; }
+  .menubar > div { position: relative; }
+  .menubar > div > span { display: block; padding: 4px 12px; cursor: default; border-radius: var(--r-sm); }
+  .menubar > div:hover > span, .menubar > div.open > span { background: var(--accent-2); color: var(--primary-60); }
+  .menu { display: none; position: absolute; top: 32px; left: 0; z-index: 30; min-width: 300px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-2); padding: 4px 0; }
+  .menubar > div.open .menu { display: block; }
+  .menu div { display: flex; justify-content: space-between; gap: 24px; padding: 6px 16px; }
+  .menu div:hover { background: var(--accent-2); }
+  .menu div kbd { color: var(--muted); font: 13px var(--font); }
+  .menu hr { border: 0; border-top: 1px solid var(--border-light); margin: 4px 0; }
+
+  /* 도구 모음 */
+  .toolbar { display: flex; align-items: center; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface); flex-wrap: nowrap; }
+  .tb { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 56px; height: 48px; padding: 2px 6px; border: 1px solid transparent; border-radius: var(--r-md); background: transparent; cursor: pointer; color: var(--text-sub); }
+  .tb:hover { background: var(--gray-5); border-color: var(--border-light); }
+  .tb:active { background: var(--gray-10); }
+  .tb .ic { font-size: 18px; line-height: 22px; }
+  .tb .lb { font-size: 13px; white-space: nowrap; }
+  .tb.play .ic { color: var(--primary-50); }
+  .tb.stop .ic { color: var(--gray-70); }
+  .tb.mark .ic { color: var(--warning-60); }
+  .sep { width: 1px; height: 32px; background: var(--border); margin: 0 4px; }
+  .lcd { background: var(--lcd-bg); color: var(--lcd); border: 1px solid var(--secondary-10); font: 700 22px var(--mono); padding: 4px 12px; border-radius: var(--r-md); letter-spacing: 1px; margin-left: 4px; }
+  .field { font-size: 13px; color: var(--text-sub); display: flex; flex-direction: column; gap: 2px; }
+  .field select { height: 32px; border: 1px solid var(--border-input); border-radius: var(--r-md); padding: 0 8px; background: var(--surface); font-size: 15px; }
+  .primary { height: 40px; padding: 0 16px; border: 0; border-radius: var(--r-md); background: var(--accent); color: #fff; font-weight: 700; font-size: 17px; cursor: pointer; white-space: nowrap; margin-left: 8px; box-shadow: var(--shadow-1); }
+  .primary:hover { background: var(--accent-hover); }
+  .primary:active { background: var(--accent-press); }
+  .primary:disabled { background: var(--gray-10); color: var(--gray-50); box-shadow: none; cursor: not-allowed; }
+  .nav { display: flex; align-items: center; gap: 8px; margin-left: auto; padding-right: 8px; }
+  .nav .cur { min-width: 240px; height: 32px; padding: 3px 12px; background: var(--gray-5); border: 1px solid var(--border-light); border-radius: var(--r-md); text-align: center; white-space: nowrap; }
+  .nav .cur b { font-weight: 700; }
+  .small { height: 32px; padding: 0 12px; border: 1px solid var(--border-input); border-radius: var(--r-md); background: var(--surface); cursor: pointer; white-space: nowrap; font-size: 15px; color: var(--text); }
+  .small:hover { background: var(--gray-5); }
+  .small.blue { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .small.blue:hover { background: var(--accent-hover); }
+  .small:disabled { background: var(--gray-10); color: var(--gray-50); border-color: var(--gray-10); cursor: not-allowed; }
+
+  /* 4분할 작업 영역 */
+  .work { flex: 1; min-height: 0; display: grid; grid-template-columns: 3fr 2fr; grid-template-rows: 3fr 2fr; gap: 8px; padding: 8px; position: relative; }
+  .pane { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--shadow-1); }
+  .pane-h { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; background: var(--surface); border-bottom: 1px solid var(--border-light); }
+  .pane-h .no { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--primary-50); color: #fff; font-size: 13px; font-weight: 700; }
+  .pane-h .t { font-weight: 700; font-size: 17px; }
+  .pane-h .sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pane-h .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .wave-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--wave-bg); }
+  .wave-wrap canvas { display: block; width: 100%; }
+  .wave-main { flex: 1; min-height: 0; position: relative; }
+  .wave-main canvas { position: absolute; inset: 0; height: 100%; cursor: text; }
+  .ruler { height: 24px; background: var(--surface); border-top: 1px solid var(--border-light); }
+  .overview { height: 36px; border-top: 1px solid var(--border-light); background: var(--gray-5); cursor: pointer; }
+  .pane-f { display: flex; align-items: center; gap: 16px; min-height: 40px; padding: 4px 12px; border-top: 1px solid var(--border-light); background: var(--surface-sub); font-size: 13px; color: var(--text-sub); }
+  .pane-f label { display: inline-flex; align-items: center; gap: 4px; }
+  .pane-f input[type=number] { width: 88px; height: 32px; border: 1px solid var(--border-input); border-radius: var(--r-md); padding: 0 8px; text-align: right; font-size: 15px; background: var(--surface); }
+  .pane-f .grow { flex: 1; }
+  .pane-f > span { white-space: nowrap; }
+  .pane-f .ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  textarea.stt { flex: 1; min-height: 0; resize: none; border: 0; padding: 16px; font-size: 17px; line-height: 1.5; outline: none; color: var(--text); background: var(--surface); }
+  textarea.stt:focus { box-shadow: inset 0 0 0 2px var(--focus); }
+  textarea.stt:disabled { background: var(--gray-5); color: var(--gray-50); }
+  textarea.stt::placeholder { color: var(--gray-50); }
+  .progress { height: 4px; background: var(--gray-10); }
+  .progress > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+  /* 배지: 색만으로 구분하지 않도록 기호를 함께 표시 */
+  .badge { font-size: 13px; padding: 0 8px; border-radius: var(--r-xs); border: 1px solid var(--border); color: var(--text-sub); background: var(--gray-5); white-space: nowrap; line-height: 22px; }
+  .badge.ok { color: var(--success-60); border-color: var(--success-10); background: var(--success-5); }
+  .badge.ok::before { content: "✓ "; }
+  .badge.warn { color: var(--warning-60); border-color: var(--warning-10); background: var(--warning-5); }
+  .badge.warn::before { content: "● "; }
+  .badge.edit { color: var(--danger-60); border-color: var(--danger-10); background: var(--danger-5); }
+  .badge.edit::before { content: "✎ "; }
+  .chips { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-light); overflow-x: auto; min-height: 44px; align-items: center; }
+  .chip { height: 28px; padding: 0 12px; border: 1px solid var(--border-input); border-radius: var(--r-sm); background: var(--surface); font-size: 13px; line-height: 26px; cursor: pointer; white-space: nowrap; }
+  .chip:hover { background: var(--accent-2); }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .empty { flex: 1; display: grid; place-items: center; color: var(--muted); font-size: 15px; text-align: center; line-height: 1.8; }
+  .seg-toggle { display: inline-flex; border: 1px solid var(--border-input); border-radius: var(--r-md); overflow: hidden; }
+  .seg-toggle button { height: 30px; border: 0; background: var(--surface); padding: 0 12px; font-size: 13px; cursor: pointer; }
+  .seg-toggle button { white-space: nowrap; }
+  .pane-h .t { white-space: nowrap; }
+  .pane-h .sub { min-width: 0; flex: 1 1 auto; }
+  .seg-toggle button + button { border-left: 1px solid var(--border-input); }
+  .seg-toggle button.on { background: var(--accent); color: #fff; font-weight: 700; }
+
+  /* 파일 목록 서랍 */
+  .drawer { position: absolute; top: 8px; bottom: 8px; left: 8px; width: 400px; z-index: 20; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-3); display: none; flex-direction: column; overflow: hidden; }
+  .drawer.open { display: flex; }
+  .drawer .filter { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border-light); }
+  .drawer .filter input, .drawer .filter select { height: 32px; border: 1px solid var(--border-input); border-radius: var(--r-md); padding: 0 8px; background: var(--surface); }
+  .drawer .filter input { flex: 1; }
+  .drawer ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  .drawer li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--gray-5); cursor: pointer; }
+  .drawer li:hover { background: var(--accent-2); }
+  .drawer li.cur { background: var(--primary-10); font-weight: 700; }
+  .drawer li .st { width: 18px; text-align: center; }
+  .drawer li .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .drawer li .dur { color: var(--muted); font-size: 13px; }
+  .drawer .sum { padding: 8px 12px; border-top: 1px solid var(--border-light); font-size: 13px; color: var(--muted); background: var(--surface-sub); }
+
+  /* 상태줄 (GoldWave 2줄 형식) */
+  .status { border-top: 1px solid var(--border); background: var(--surface); font-size: 13px; color: var(--text-sub); }
+  .status .row { display: flex; height: 26px; align-items: center; }
+  .status .row + .row { border-top: 1px solid var(--border-light); }
+  .status .c { padding: 0 12px; border-right: 1px solid var(--border-light); height: 100%; display: flex; align-items: center; white-space: nowrap; }
+  .status .c.w1 { width: 80px; } .status .c.w2 { width: 90px; justify-content: flex-end; font-family: var(--mono); }
+  .status .c.grow { flex: 1; border-right: 0; overflow: hidden; text-overflow: ellipsis; }
+  .status .c.fmt { font-weight: 700; color: var(--text); }
+
+  /* 단축키 안내 · 알림 · 모달 */
+  .help { position: fixed; right: 16px; bottom: 72px; z-index: 40; width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-3); display: none; overflow: hidden; }
+  .help.open { display: block; }
+  .help h4 { margin: 0; padding: 8px 16px; font-size: 17px; background: var(--surface-sub); border-bottom: 1px solid var(--border-light); display: flex; justify-content: space-between; align-items: center; }
+  .help table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .help td { padding: 6px 16px; border-bottom: 1px solid var(--gray-5); }
+  .help td:first-child { width: 140px; } .help kbd { font: 13px var(--mono); background: var(--gray-5); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 0 6px; }
+  .toast { position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%); background: var(--gray-90); color: #fff; padding: 8px 16px; border-radius: var(--r-md); box-shadow: var(--shadow-3); opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 70; }
+  .toast.show { opacity: .95; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 60; display: none; place-items: center; }
+  .modal-bg.open { display: grid; }
+  .modal { width: 840px; background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--shadow-4); overflow: hidden; }
+  .modal h4 { margin: 0; padding: 24px 24px 8px; font-size: 19px; }
+  .modal .body { padding: 8px 24px 16px; display: grid; grid-template-columns: 270px 1fr auto; gap: 8px; align-items: center; }
+  .modal .body input { height: 40px; border: 1px solid var(--border-input); border-radius: var(--r-md); padding: 0 16px; font-size: 15px; }
+  .modal .body input[readonly] { background: var(--gray-5); }
+  .modal .body .hint { grid-column: 2 / 4; color: var(--muted); font-size: 13px; margin: -4px 0 8px; }
+  .modal .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--border-light); }
+  .over { color: var(--danger-60) !important; }
+  .req { color: var(--danger-60); }
+  .modal .body input.err { border: 2px solid var(--danger-50); }
+  .modal .body .hint.err { color: var(--danger-60); font-weight: 700; }
+  .note { margin-left: auto; background: var(--info-5); border: 1px solid var(--info-10); padding: 0 12px; font-size: 13px; color: var(--info-60); border-radius: var(--r-sm); }
+</style>
+</head>
+<body>
+
+<!-- 제목줄 -->
+<div class="titlebar">
+  <div class="logo"></div>
+  <b>WaveText</b><span>— 음성학습용 Wave/Text 생성기</span>
+  <span class="path" id="titlePath"></span>
+  <div class="note">화면 시안입니다. 소리 재생과 음성인식은 동작을 흉내만 냅니다. <a href="#" data-act="help">단축키(F1)</a></div>
+</div>
+
+<!-- 메뉴 (GoldWave 메뉴 중 필요한 항목만 남김) -->
+<div class="menubar" id="menubar">
+  <div><span>파일(F)</span>
+    <div class="menu">
+      <div data-act="openDir">음성 폴더 열기… <kbd>Ctrl+O</kbd></div>
+      <div data-act="outDir">저장 폴더 설정… <kbd>Ctrl+Shift+O</kbd></div>
+      <hr>
+      <div data-act="prev">이전 파일 <kbd>PgUp</kbd></div>
+      <div data-act="next">다음 파일 <kbd>PgDn</kbd></div>
+      <div data-act="drawer">파일 목록 보기 <kbd>Ctrl+L</kbd></div>
+      <hr>
+      <div data-act="info">파일 정보…</div>
+      <hr>
+      <div>끝내기 <kbd>Alt+F4</kbd></div>
+    </div>
+  </div>
+  <div><span>편집(E)</span>
+    <div class="menu">
+      <div data-act="markStart">시작 마크 <kbd>[</kbd></div>
+      <div data-act="markEnd">끝 마크 <kbd>]</kbd></div>
+      <div data-act="clearSel">마크 해제 <kbd>Esc</kbd></div>
+      <div data-act="selAll">전체 선택 <kbd>Ctrl+A</kbd></div>
+      <hr>
+      <div data-act="create">학습용 파일 생성하기 <kbd>Ctrl+Enter</kbd></div>
+      <div data-act="delPair">선택한 학습용 파일 삭제 <kbd>Del</kbd></div>
+    </div>
+  </div>
+  <div><span>보기(V)</span>
+    <div class="menu">
+      <div data-act="zoomIn">확대 <kbd>Shift+↑</kbd></div>
+      <div data-act="zoomOut">축소 <kbd>Shift+↓</kbd></div>
+      <div data-act="zoomSel">선택 구간 맞춤 <kbd>Shift+S</kbd></div>
+      <div data-act="zoomAll">전체 보기 <kbd>Shift+A</kbd></div>
+      <hr>
+      <div data-act="vzoomIn">세로 확대 <kbd>Ctrl+↑</kbd></div>
+      <div data-act="vzoomOut">세로 축소 <kbd>Ctrl+↓</kbd></div>
+    </div>
+  </div>
+  <div><span>음성인식(R)</span>
+    <div class="menu">
+      <div data-act="recog">원본 음성인식 실행 <kbd>F5</kbd></div>
+      <div data-act="recogSel">선택 구간만 인식 <kbd>Shift+F5</kbd></div>
+      <div data-act="stopRecog">인식 중지</div>
+      <hr>
+      <div data-act="health">서버 연결 확인</div>
+    </div>
+  </div>
+  <div><span>설정(O)</span>
+    <div class="menu">
+      <div data-act="settings">음성인식 서버 설정…</div>
+      <div data-act="settings">노이즈 제거 설정…</div>
+      <div data-act="settings">파일 이름 규칙…</div>
+    </div>
+  </div>
+  <div><span>도움말(H)</span>
+    <div class="menu">
+      <div data-act="help">단축키 안내 <kbd>F1</kbd></div>
+      <div>사용 설명서</div>
+      <div>WaveText 정보</div>
+    </div>
+  </div>
+  <div class="nav">
+    <button class="small" data-act="prev" title="이전 파일 (PgUp)">◀ 이전</button>
+    <div class="cur"><b id="curName"></b> <span id="curIdx" style="color:var(--muted)"></span></div>
+    <button class="small" data-act="next" title="다음 파일 (PgDn)">다음 ▶</button>
+  </div>
+</div>
+
+<!-- 도구 모음 -->
+<div class="toolbar">
+  <button class="tb" data-act="openDir" title="음성 폴더 열기 (Ctrl+O)"><span class="ic">📂</span><span class="lb">음성 폴더</span></button>
+  <button class="tb" data-act="outDir" title="원본 음성 폴더와 저장 폴더 설정 (Ctrl+Shift+O)"><span class="ic">📁</span><span class="lb">저장 폴더</span></button>
+  <button class="tb" data-act="drawer" title="파일 목록 (Ctrl+L)"><span class="ic">☰</span><span class="lb">파일 목록</span></button>
+  <div class="sep"></div>
+  <button class="tb play" data-act="play" title="전체 재생 (Space)"><span class="ic">▶</span><span class="lb">재생</span></button>
+  <button class="tb play" data-act="playSel" title="선택 구간 재생 (Shift+Space)"><span class="ic">⏵⃞</span><span class="lb">구간 재생</span></button>
+  <button class="tb stop" data-act="stop" title="정지 (Space)"><span class="ic">■</span><span class="lb">정지</span></button>
+  <div class="lcd" id="lcd">00:00:00.0</div>
+  <div class="sep"></div>
+  <button class="tb mark" data-act="markStart" title="재생 위치를 시작으로 ( [ )"><span class="ic">⟦</span><span class="lb">시작 마크</span></button>
+  <button class="tb mark" data-act="markEnd" title="재생 위치를 끝으로 ( ] )"><span class="ic">⟧</span><span class="lb">끝 마크</span></button>
+  <button class="tb" data-act="clearSel" title="마크 해제 (Esc)"><span class="ic">✕</span><span class="lb">마크 해제</span></button>
+  <div class="sep"></div>
+  <button class="tb" data-act="zoomIn" title="확대 (Shift+↑)"><span class="ic">🔍+</span><span class="lb">확대</span></button>
+  <button class="tb" data-act="zoomOut" title="축소 (Shift+↓)"><span class="ic">🔍−</span><span class="lb">축소</span></button>
+  <button class="tb" data-act="zoomSel" title="선택 구간 맞춤 (Shift+S)"><span class="ic">⤢</span><span class="lb">구간 맞춤</span></button>
+  <button class="tb" data-act="zoomAll" title="전체 보기 (Shift+A)"><span class="ic">⇔</span><span class="lb">전체</span></button>
+  <div class="sep"></div>
+  <label class="field">노이즈 제거
+    <select id="nr">
+      <option value="0">사용 안 함</option>
+      <option value="1">약</option>
+      <option value="2" selected>중</option>
+      <option value="3">강</option>
+    </select>
+  </label>
+  <button class="primary" id="btnCreate" data-act="create" title="선택 구간(30초 이내)으로 학습용 Wave/Text 생성 (Ctrl+Enter)" disabled>학습용 파일 생성하기</button>
+</div>
+
+<!-- 4분할 작업 영역 -->
+<div class="work" id="work">
+
+  <!-- ① 원본 파형 -->
+  <section class="pane">
+    <div class="pane-h">
+      <span class="no">1</span><span class="t">원본 파형</span>
+      <span class="sub" id="srcSub"></span>
+      <span class="right">
+        <span class="badge" id="viewBadge">보기 0.000 ~ 18.212초</span>
+        <button class="small blue" data-act="play" id="btnSrcPlay" title="원본 재생 / 일시정지 (Space)">▶ 원본 재생</button>
+        <button class="small" data-act="playSel" title="선택 구간만 재생 (Shift+Space)">구간 재생</button>
+        <button class="small" data-act="stop" title="정지 (재생 위치는 유지)">■ 정지</button>
+      </span>
+    </div>
+    <div class="wave-wrap">
+      <div class="wave-main"><canvas id="cvSrc"></canvas></div>
+      <canvas class="ruler" id="cvRuler" height="20"></canvas>
+      <canvas class="overview" id="cvOver" height="34"></canvas>
+    </div>
+    <div class="pane-f">
+      <span>선택 구간</span>
+      <label>시작 <input type="number" id="selStart" step="0.01" min="0"> 초</label>
+      <label>끝 <input type="number" id="selEnd" step="0.01" min="0"> 초</label>
+      <span>길이 <b id="selLen">-</b> <span style="color:var(--muted)">(최대 30초)</span></span>
+      <span class="grow"></span>
+      <span style="color:var(--muted)">끌어서 구간 선택 · 노란 경계선을 끌어 미세 조정 · 휠로 확대/축소</span>
+    </div>
+  </section>
+
+  <!-- ② 원본 인식 결과 -->
+  <section class="pane">
+    <div class="pane-h">
+      <span class="no">2</span><span class="t">원본 음성인식 결과</span>
+      <span class="badge" id="srcState">미실행</span>
+      <span class="right">
+        <button class="small blue" data-act="recog" id="btnRecog" title="음성인식 서버로 원본 인식 (F5)">음성인식 실행</button>
+        <button class="small" data-act="saveSrc" title="원본 인식 결과 저장 (Ctrl+S)">저장</button>
+      </span>
+    </div>
+    <div class="progress"><i id="srcProg"></i></div>
+    <textarea class="stt" id="srcText" placeholder="[음성인식 실행]을 누르면 음성인식 서버의 인식 결과가 여기에 표시됩니다. 직접 수정하고 저장할 수 있습니다."></textarea>
+    <div class="pane-f">
+      <span title="음성인식 서버 설정">서버 <b>ws://10.0.0.21:8081</b> · <b>model_v2</b></span>
+      <span class="badge ok">연결됨</span>
+      <span id="srcInfo" style="color:var(--muted)"></span>
+      <span class="grow"></span>
+      <span id="fullDirInfo" class="ell" style="color:var(--muted)"></span>
+    </div>
+  </section>
+
+  <!-- ③ 생성된 학습용 파형 -->
+  <section class="pane">
+    <div class="pane-h">
+      <span class="no">3</span><span class="t">생성된 학습용 Wave</span>
+      <span class="sub" id="outSub">아직 생성된 파일이 없습니다</span>
+      <span class="right">
+        <span class="seg-toggle" title="노이즈 제거 효과 비교: 파형 표시와 재생이 선택한 쪽으로 바뀝니다. 저장되는 파일은 항상 '노이즈 제거 후'입니다.">
+          <button id="tgAfter" class="on">노이즈 제거 후</button><button id="tgBefore">원음</button>
+        </span>
+        <button class="small" data-act="playOut" title="학습용 파일 재생 (Ctrl+Space)">▶ 재생</button>
+      </span>
+    </div>
+    <div class="chips" id="chips"><span style="color:var(--muted);font-size:12px">이 원본에서 만든 학습용 파일 쌍이 여기에 표시됩니다</span></div>
+    <div class="wave-wrap">
+      <div class="wave-main" id="outBox">
+        <div class="empty" id="outEmpty">①에서 음성이 명료한 구간을 선택하고<br><b style="color:var(--accent)">[학습용 파일 생성하기]</b>를 누르세요</div>
+        <canvas id="cvOut" style="display:none"></canvas>
+      </div>
+      <canvas class="ruler" id="cvOutRuler" height="20"></canvas>
+    </div>
+    <div class="pane-f" id="outInfo"><span style="color:var(--muted)" id="wavDirInfo"></span></div>
+  </section>
+
+  <!-- ④ 생성된 학습용 텍스트 -->
+  <section class="pane">
+    <div class="pane-h">
+      <span class="no">4</span><span class="t">학습용 Text</span>
+      <span class="badge" id="outState">-</span>
+      <span class="right">
+        <button class="small" data-act="copySrc" title="②에서 선택 구간에 해당하는 문장 가져오기">② 문장 가져오기</button>
+        <button class="small blue" data-act="saveOut" title="학습용 텍스트 저장 (Ctrl+S)">저장</button>
+      </span>
+    </div>
+    <div class="progress"><i id="outProg"></i></div>
+    <textarea class="stt" id="outText" placeholder="학습용 파일을 생성하면 잘라낸 음성을 자동으로 음성인식하여 여기에 표시합니다. 들어보고 틀린 부분을 고친 뒤 저장하세요." disabled></textarea>
+    <div class="pane-f">
+      <span id="outFile" style="color:var(--muted)">-</span>
+      <span class="grow"></span>
+      <span style="color:var(--muted)">UTF-8 · 한 줄 전사</span>
+    </div>
+  </section>
+
+  <!-- 파일 목록 서랍 -->
+  <aside class="drawer" id="drawer">
+    <div class="pane-h"><span class="t">파일 목록</span><span class="sub" id="drawerDir">D:\녹취\20241119</span>
+      <span class="right"><button class="small" data-act="drawer">닫기</button></span></div>
+    <div class="filter">
+      <input id="flt" placeholder="파일 이름 검색">
+      <select id="fltSt"><option value="all">전체</option><option value="todo">미처리</option><option value="done">생성 완료</option></select>
+    </div>
+    <ul id="fileList"></ul>
+    <div class="sum" id="fileSum"></div>
+  </aside>
+</div>
+
+<!-- 상태줄 -->
+<div class="status">
+  <div class="row">
+    <div class="c w1">Mono</div>
+    <div class="c w2" id="stDur1">18.212</div>
+    <div class="c" id="stSel">선택 없음</div>
+    <div class="c grow" id="stMsg">준비</div>
+  </div>
+  <div class="row">
+    <div class="c w1">원본</div>
+    <div class="c w2" id="stDur2">18.212</div>
+    <div class="c fmt" id="stFmt">18.212초 · Wave PCM signed 16 bit, 8000 Hz, 128 kbps, mono</div>
+    <div class="c grow" id="stProg"></div>
+  </div>
+</div>
+
+<div class="help" id="help">
+  <h4>단축키 안내 <button class="small" data-act="help">닫기</button></h4>
+  <table>
+    <tr><td><kbd>Space</kbd></td><td>재생 / 정지</td></tr>
+    <tr><td><kbd>Shift+Space</kbd></td><td>선택 구간 재생</td></tr>
+    <tr><td><kbd>Ctrl+Space</kbd></td><td>학습용 파일 재생</td></tr>
+    <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>재생 위치를 시작 / 끝 마크로</td></tr>
+    <tr><td><kbd>← →</kbd></td><td>재생 위치 0.1초 이동 (Shift: 1초)</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>마크 해제</td></tr>
+    <tr><td><kbd>Ctrl+Enter</kbd></td><td>학습용 파일 생성하기</td></tr>
+    <tr><td><kbd>F5</kbd></td><td>원본 음성인식 실행</td></tr>
+    <tr><td><kbd>Ctrl+S</kbd></td><td>편집 중인 텍스트 저장</td></tr>
+    <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>이전 / 다음 파일</td></tr>
+    <tr><td><kbd>Shift+↑ ↓</kbd></td><td>확대 / 축소</td></tr>
+    <tr><td><kbd>Ctrl+L</kbd></td><td>파일 목록</td></tr>
+  </table>
+</div>
+<div class="modal-bg" id="dirModal">
+  <div class="modal">
+    <h4>저장 폴더 설정</h4>
+    <div class="body">
+      <span>원본 음성 폴더 <b class="req" title="필수">*</b></span><input id="dirSrc" value="D:\녹취\20241119" aria-required="true"><button class="small" data-act="pickSrc">찾아보기…</button>
+      <span class="hint" id="dirSrcHint">필수 입력입니다. 아래 폴더를 비워 두면 이 폴더 아래에 만듭니다.</span>
+      <span>원본 음성인식 Text</span><input id="dirFull"><button class="small" data-act="pickFull">찾아보기…</button>
+      <span class="hint">원본 전체 음성인식 결과 <b>원본이름.stt.txt</b></span>
+      <span>분할 Wav</span><input id="dirWav"><button class="small" data-act="pickWav">찾아보기…</button>
+      <span class="hint">분할 음성파일 <b>원본이름.part-1.wav</b>, part-2.wav …</span>
+      <span>분할 음성인식 Text</span><input id="dirTxt"><button class="small" data-act="pickTxt">찾아보기…</button>
+      <span class="hint">분할 음성파일 음성인식 결과 <b>원본이름.stt-1.txt</b>, stt-2.txt …</span>
+    </div>
+    <div class="foot"><button class="small" data-act="closeDir">취소</button><button class="small blue" data-act="applyDir">확인</button></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  // ---------- 시안용 가상 데이터 ----------
+  const RATE = 1000; // 파형 포락선 해상도(점/초)
+  const FILES = [];
+  const names = ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012"];
+  const durs = [12.44, 9.87, 21.03, 15.6, 7.92, 18.212, 11.3, 42.64, 8.75, 14.06, 19.9, 10.33];
+  names.forEach((n, i) => FILES.push({ name: `20241119170140_${n}.wav`, dur: durs[i], pairs: i < 3 ? [{}, {}] : [] }));
+  const TOTAL = 3452;
+  let cur = 5;
+
+  const SENT = "네 안녕하세요 고객센터 상담원 김지은입니다 무엇을 도와드릴까요 지난달 요금이 평소보다 많이 나와서요 확인 부탁드립니다 네 고객님 본인 확인을 위해 생년월일 여섯 자리 말씀해 주시겠어요 팔칠 공삼 일오입니다 감사합니다 잠시만 기다려 주세요";
+
+  function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+  function makeSignal(dur, seed) {
+    const r = rng(seed), n = Math.round(dur * RATE);
+    const mx = new Float32Array(n), mn = new Float32Array(n), speech = new Uint8Array(n);
+    let t = 0.15 + r() * 0.2;
+    const words = SENT.split(" "), spans = [];
+    let wi = 0;
+    while (t < dur - 0.2) {
+      const len = 0.18 + r() * 0.45, amp = 0.12 + r() * 0.12;
+      const a = Math.round(t * RATE), b = Math.min(n, Math.round((t + len) * RATE));
+      for (let k = a; k < b; k++) {
+        const p = (k - a) / (b - a), env = Math.sin(Math.PI * p) ** 0.6 * amp;
+        const v = 0.35 + 0.65 * Math.abs(Math.sin(k * 0.09 + r() * 0.8));
+        mx[k] = env * v * (0.6 + r() * 0.4); mn[k] = -env * v * (0.6 + r() * 0.4); speech[k] = 1;
+      }
+      spans.push({ t0: t, t1: t + len, w: words[wi++ % words.length] });
+      t += len + (r() < 0.12 ? 0.6 + r() * 0.9 : 0.04 + r() * 0.12);
+    }
+    for (let k = 0; k < n; k++) { const nz = 0.0015 + r() * 0.004; if (mx[k] < nz) mx[k] = nz; if (mn[k] > -nz) mn[k] = -nz; }
+    return { mx, mn, speech, spans, dur, n };
+  }
+
+  // ---------- 상태 ----------
+  const S = {
+    sig: null, view: [0, 0], vzoom: 1, sel: null, playhead: 0, playing: null,
+    pairs: [], curPair: -1, showBefore: false, srcDone: false, srcDirty: false, outDirty: false, nextNo: 1, recogTimer: null
+  };
+  const $ = id => document.getElementById(id);
+  const fmtT = s => { s = Math.max(0, s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${x.toFixed(1).padStart(4, "0")}`; };
+  const f3 = v => v.toFixed(3);
+  const base = () => FILES[cur].name.replace(/\.wav$/i, "");
+  const MAX_SEG = 30; // 발췌 최대 길이(초)
+  let SRC_DIR = "D:\\녹취\\20241119"; // 원본 음성 폴더 (필수)
+  const DIRS = { wav: "", txt: "", full: "" }; // 비우면 각각 원본 음성 폴더 아래 part-wav / part-stt / full-stt
+  const wavDir = () => DIRS.wav || `${SRC_DIR}\\part-wav`;
+  const txtDir = () => DIRS.txt || `${SRC_DIR}\\part-stt`;
+  const fullDir = () => DIRS.full || `${SRC_DIR}\\full-stt`;
+  function showDirs() {
+    $("wavDirInfo") && ($("wavDirInfo").textContent = `분할 Wav: ${wavDir()}${DIRS.wav ? "" : " (기본값)"}`);
+    $("stProg").textContent = `진행: 생성 완료 ${FILES.filter(x => x.pairs.length).length + 337}개 / 전체 ${TOTAL.toLocaleString()}개 · 원본 음성인식 Text → ${fullDir()} · 분할 Wav → ${wavDir()} · 분할 음성인식 Text → ${txtDir()}`;
+    $("fullDirInfo").textContent = `원본 음성인식 Text: ${fullDir()}${DIRS.full ? "" : " (기본값)"}`;
+  }
+  // 저장 폴더 창: 원본 음성 폴더 필수 검사, 빈 칸에 기본 위치 안내
+  function srcCheck(showErr) {
+    const ok = !!$("dirSrc").value.trim(), bad = showErr && !ok, hint = $("dirSrcHint");
+    $("dirSrc").classList.toggle("err", bad); hint.classList.toggle("err", bad);
+    hint.textContent = bad ? "원본 음성 폴더를 입력하세요. (필수)" : "필수 입력입니다. 아래 폴더를 비워 두면 이 폴더 아래에 만듭니다.";
+    if (bad) $("dirSrc").focus();
+    return ok;
+  }
+  function dirHints() {
+    const s = $("dirSrc").value.trim().replace(/\\+$/, "") || "원본 음성 폴더";
+    $("dirFull").placeholder = `비우면: ${s}\\full-stt`;
+    $("dirWav").placeholder = `비우면: ${s}\\part-wav`;
+    $("dirTxt").placeholder = `비우면: ${s}\\part-stt`;
+  }
+  document.addEventListener("input", e => { if (e.target.id === "dirSrc") { srcCheck(false); dirHints(); } });
+
+  function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1800); $("stMsg").textContent = msg; }
+
+  // ---------- 파형 그리기 ----------
+  function fit(cv) { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; const w = Math.max(1, Math.round(r.width * d)), h = Math.max(1, Math.round(r.height * d)); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } return { w, h, d }; }
+
+  function drawWave(cv, sig, v0, v1, opt) {
+    const { w, h, d } = fit(cv), g = cv.getContext("2d");
+    const gutter = opt.labels ? 40 * d : 0, W = w - gutter;
+    g.fillStyle = getCss("--wave-bg"); g.fillRect(0, 0, w, h);
+    const mid = h / 2, vz = opt.vzoom || 1;
+    if (opt.grid) {
+      g.lineWidth = 1; g.font = `${12 * d}px ${getCss("--mono")}`;
+      for (let i = -9; i <= 9; i++) {
+        const y = Math.round(mid - (i / 10) * (h / 2) * 0.96) + 0.5;
+        g.strokeStyle = i === 0 ? getCss("--wave-zero") : (i % 5 === 0 ? getCss("--wave-grid-mid") : getCss("--wave-grid"));
+        g.beginPath(); g.moveTo(gutter, y); g.lineTo(w, y); g.stroke();
+        const stepPx = (h / 2) * 0.96 / 10, stride = [1, 2, 5, 10].find(s => s * stepPx >= 16 * d) || 10;
+        if (opt.labels && i % stride === 0) { g.fillStyle = getCss("--wave-label"); g.fillText((i / 10 / vz).toFixed(2).replace(/0$/, ""), 3 * d, y + 3 * d); }
+      }
+      const step = niceStep((v1 - v0) / (W / (70 * d)));
+      g.strokeStyle = getCss("--wave-grid");
+      for (let t = Math.ceil(v0 / step) * step; t <= v1; t += step) { const x = gutter + Math.round((t - v0) / (v1 - v0) * W) + 0.5; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke(); }
+    }
+    const X = t => gutter + (t - v0) / (v1 - v0) * W;
+    if (opt.sel) {
+      const a = X(opt.sel[0]), b = X(opt.sel[1]);
+      g.fillStyle = getCss("--sel-bg"); g.fillRect(a, 0, b - a, h);
+    }
+    // 포락선
+    const src = opt.before ? opt.before : sig;
+    g.strokeStyle = getCss("--wave"); g.lineWidth = 1;
+    g.beginPath();
+    for (let x = 0; x < W; x++) {
+      const t0 = v0 + (x / W) * (v1 - v0), t1 = v0 + ((x + 1) / W) * (v1 - v0);
+      let a = Math.floor(t0 * RATE), b = Math.max(a + 1, Math.ceil(t1 * RATE));
+      if (a >= src.n || b <= 0) continue;
+      a = Math.max(0, a); b = Math.min(src.n, b);
+      let hi = -1, lo = 1;
+      for (let k = a; k < b; k++) { if (src.mx[k] > hi) hi = src.mx[k]; if (src.mn[k] < lo) lo = src.mn[k]; }
+      const sc = (h / 2) * 0.96 * vz * (opt.gain || 1);
+      g.moveTo(gutter + x + 0.5, mid - Math.min(1, hi) * sc); g.lineTo(gutter + x + 0.5, mid - Math.max(-1, lo) * sc + 1);
+    }
+    g.stroke();
+    if (opt.sel) {
+      g.strokeStyle = getCss("--mark"); g.lineWidth = 2 * d;
+      // 색만으로 구분하지 않도록 경계에 "시작"/"끝" 글자 탭을 붙인다 (KRDS 색각이상자 고려)
+      g.font = `700 ${12 * d}px ${getCss("--font")}`;
+      [[opt.sel[0], "시작", 1], [opt.sel[1], "끝", -1]].forEach(([t, lb, dir]) => {
+        const x = Math.round(X(t)); g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+        if (!opt.labels) return;
+        const tw = g.measureText(lb).width + 10 * d, bx = dir > 0 ? x : x - tw;
+        g.fillStyle = getCss("--mark"); g.fillRect(bx, 0, tw, 18 * d);
+        g.fillStyle = getCss("--gray-90"); g.fillText(lb, bx + 5 * d, 13 * d);
+      });
+    }
+    if (opt.playhead != null && opt.playhead >= v0 && opt.playhead <= v1) {
+      g.strokeStyle = getCss("--play"); g.lineWidth = 1.5 * d; const x = Math.round(X(opt.playhead)); g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    }
+    return { X, T: px => v0 + ((px * d - gutter) / W) * (v1 - v0), gutter: gutter / d };
+  }
+
+  function drawRuler(cv, v0, v1, gutterCss) {
+    const { w, h, d } = fit(cv), g = cv.getContext("2d");
+    g.fillStyle = getCss("--surface"); g.fillRect(0, 0, w, h);
+    const gut = (gutterCss || 0) * d, W = w - gut, step = niceStep((v1 - v0) / (W / (80 * d)));
+    g.fillStyle = getCss("--text-sub"); g.strokeStyle = getCss("--gray-40"); g.font = `${12 * d}px ${getCss("--mono")}`;
+    const minor = step / 5;
+    for (let t = Math.ceil(v0 / minor) * minor; t <= v1 + 1e-9; t += minor) {
+      const x = gut + Math.round((t - v0) / (v1 - v0) * W) + 0.5, major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, major ? 7 * d : 3 * d); g.stroke();
+      if (major) g.fillText(step < 1 ? t.toFixed(step < 0.1 ? 2 : 1) : fmtT(t).slice(0, 8), x + 2 * d, h - 4 * d);
+    }
+  }
+  function niceStep(raw) { const c = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60]; return c.find(x => x >= raw) || 60; }
+  const css = getComputedStyle(document.documentElement);
+  function getCss(n) { return css.getPropertyValue(n).trim(); }
+
+  let mapSrc = null, mapOver = null;
+  function render() {
+    const s = S.sig; if (!s) return;
+    mapSrc = drawWave($("cvSrc"), s, S.view[0], S.view[1], { grid: true, labels: true, sel: S.sel, playhead: S.playhead, vzoom: S.vzoom });
+    drawRuler($("cvRuler"), S.view[0], S.view[1], mapSrc.gutter);
+    // 전체 보기 띠
+    const ov = $("cvOver"); mapOver = drawWave(ov, s, 0, s.dur, { sel: S.sel, playhead: S.playhead, gain: 1.6 });
+    const { w, h } = fit(ov), g = ov.getContext("2d"), d = devicePixelRatio || 1;
+    g.strokeStyle = getCss("--accent"); g.lineWidth = 1.5 * d; const a = S.view[0] / s.dur * w, b = S.view[1] / s.dur * w; g.strokeRect(a + 1, 1, Math.max(3, b - a - 2), h - 2);
+    $("viewBadge").textContent = `보기 ${f3(S.view[0])} ~ ${f3(S.view[1])}초`;
+    renderOut();
+  }
+
+  function renderOut() {
+    const p = S.pairs[S.curPair];
+    const cv = $("cvOut");
+    if (!p) { cv.style.display = "none"; $("outEmpty").style.display = "grid"; drawRuler($("cvOutRuler"), 0, 1, 0); return; }
+    cv.style.display = "block"; $("outEmpty").style.display = "none";
+    const ph = S.playing && S.playing.kind === "out" ? S.playhead : null;
+    const m = drawWave(cv, p.after, 0, p.after.dur, { grid: true, labels: true, playhead: ph, before: S.showBefore ? p.before : null });
+    drawRuler($("cvOutRuler"), 0, p.after.dur, m.gutter);
+  }
+
+  // ---------- 파일 로딩 ----------
+  function loadFile(i) {
+    if (S.srcDirty || S.outDirty) toast("저장하지 않은 텍스트는 시안에서 버립니다");
+    stopPlay(); stopRecog();
+    cur = (i + FILES.length) % FILES.length;
+    const f = FILES[cur];
+    S.sig = makeSignal(f.dur, 1234 + cur * 77);
+    S.view = [0, f.dur]; S.vzoom = 1; S.sel = null; S.playhead = 0;
+    S.pairs = []; S.curPair = -1; S.nextNo = f.pairs.length + 1; S.srcDone = false; S.srcDirty = S.outDirty = false;
+    $("srcText").value = ""; setBadge("srcState", "미실행", ""); $("srcInfo").textContent = ""; $("srcProg").style.width = "0";
+    $("outText").value = ""; $("outText").disabled = true; setBadge("outState", "-", ""); $("outFile").textContent = "-"; $("outSub").textContent = f.pairs.length ? `기존 학습용 파일 ${f.pairs.length}개 (목록에서 선택)` : "아직 생성된 파일이 없습니다";
+    if (f.pairs.length) restoreExisting(f);
+    $("curName").textContent = f.name; $("curIdx").textContent = `(${cur + 1} / ${TOTAL.toLocaleString()})`;
+    $("titlePath").textContent = `${SRC_DIR}\\${f.name}`;
+    $("srcSub").textContent = f.name;
+    const d3 = f3(f.dur);
+    $("stDur1").textContent = d3; $("stDur2").textContent = d3;
+    $("stFmt").textContent = `${d3}초 · Wave PCM signed 16 bit, 8000 Hz, 128 kbps, mono`;
+    showDirs();
+    renderChips(); updateSel(); render(); renderList();
+    $("stMsg").textContent = `${f.name} 불러옴`;
+  }
+
+  function restoreExisting(f) {
+    // 이미 만든 쌍을 가상으로 복원
+    f.pairs.forEach((_, k) => { const t0 = 0.8 + k * 4.2, t1 = t0 + 3.1; S.sel = [t0, t1]; buildPair(true); });
+    S.sel = null;
+  }
+
+  // ---------- 선택 구간 ----------
+  function updateSel() {
+    const len = S.sel ? S.sel[1] - S.sel[0] : 0, over = len > MAX_SEG;
+    $("btnCreate").disabled = !(len >= 0.05) || over;
+    $("btnCreate").title = over ? `선택 구간이 ${MAX_SEG}초를 넘습니다. 구간을 줄여 주세요.` : `선택 구간(${MAX_SEG}초 이내)으로 학습용 Wave/Text 생성 (Ctrl+Enter)`;
+    $("selLen").classList.toggle("over", over);
+    $("selStart").value = S.sel ? S.sel[0].toFixed(3) : ""; $("selEnd").value = S.sel ? S.sel[1].toFixed(3) : "";
+    $("selLen").textContent = S.sel ? `${f3(len)}초${over ? " — 30초 초과" : ""}` : "-";
+    $("stSel").textContent = S.sel ? `${f3(S.sel[0])} to ${f3(S.sel[1])} (${f3(S.sel[1] - S.sel[0])})` : `0.000 to ${f3(S.sig ? S.sig.dur : 0)} (전체)`;
+  }
+  function setSel(a, b) {
+    const D = S.sig.dur; a = Math.max(0, Math.min(D, a)); b = Math.max(0, Math.min(D, b));
+    S.sel = a === b ? null : [Math.min(a, b), Math.max(a, b)]; updateSel(); render();
+  }
+  ["selStart", "selEnd"].forEach(id => $(id).addEventListener("change", () => { const a = parseFloat($("selStart").value), b = parseFloat($("selEnd").value); if (!isNaN(a) && !isNaN(b)) setSel(a, b); }));
+
+  // 마우스: 끌어서 선택, 경계 끌기, 클릭=재생 위치, 휠=확대
+  (() => {
+    const cv = $("cvSrc"); let drag = null;
+    cv.addEventListener("mousedown", e => {
+      const r = cv.getBoundingClientRect(), x = e.clientX - r.left, t = mapSrc.T(x);
+      if (S.sel) { const xa = mapSrc.X(S.sel[0]) / devicePixelRatio, xb = mapSrc.X(S.sel[1]) / devicePixelRatio; if (Math.abs(x - xa) < 6) drag = { edge: 0 }; else if (Math.abs(x - xb) < 6) drag = { edge: 1 }; }
+      if (!drag) drag = { from: t, moved: false };
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", e => {
+      const r = cv.getBoundingClientRect(), x = e.clientX - r.left;
+      if (!drag) { if (S.sel && mapSrc && e.target === cv) { const xa = mapSrc.X(S.sel[0]) / devicePixelRatio, xb = mapSrc.X(S.sel[1]) / devicePixelRatio; cv.style.cursor = (Math.abs(x - xa) < 6 || Math.abs(x - xb) < 6) ? "ew-resize" : "text"; } return; }
+      const t = mapSrc.T(x);
+      if (drag.edge != null) { const s = S.sel.slice(); s[drag.edge] = t; setSel(s[0], s[1]); if (S.sel && s[0] > s[1]) drag.edge = 1 - drag.edge; }
+      else if (Math.abs(t - drag.from) > (S.view[1] - S.view[0]) / 400) { drag.moved = true; setSel(drag.from, t); }
+    });
+    window.addEventListener("mouseup", e => {
+      if (drag && drag.edge == null && !drag.moved) { S.playhead = Math.max(0, Math.min(S.sig.dur, drag.from)); setLcd(); render(); }
+      drag = null;
+    });
+    cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(mapSrc.T(e.clientX - r.left), e.deltaY < 0 ? 0.7 : 1 / 0.7); }, { passive: false });
+    $("cvOver").addEventListener("mousedown", e => { const r = e.target.getBoundingClientRect(), t = (e.clientX - r.left) / r.width * S.sig.dur, half = (S.view[1] - S.view[0]) / 2; setView(t - half, t + half); });
+  })();
+
+  function setView(a, b) { const D = S.sig.dur, len = Math.min(D, Math.max(0.05, b - a)); a = Math.max(0, Math.min(D - len, a)); S.view = [a, a + len]; render(); }
+  function zoomAt(t, k) { const [a, b] = S.view; setView(t - (t - a) * k, t + (b - t) * k); }
+
+  // ---------- 재생 (시뮬레이션) ----------
+  function setLcd() { $("lcd").textContent = fmtT(S.playhead); }
+  function startPlay(kind, a, b) {
+    stopPlay(); const t0 = performance.now();
+    S.playing = { kind, a, b };
+    if (kind !== "out") S.playhead = a;
+    const tick = () => {
+      if (!S.playing) return;
+      const t = a + (performance.now() - t0) / 1000;
+      if (t >= b) { stopPlay(); return; }
+      S.playhead = t; setLcd();
+      if (kind !== "out" && (t > S.view[1] || t < S.view[0])) { const len = S.view[1] - S.view[0]; setView(t - len * 0.1, t + len * 0.9); } else render();
+      S.playing.raf = requestAnimationFrame(tick);
+    };
+    tick(); $("stMsg").textContent = kind === "out" ? (S.showBefore ? "분할 음성 재생 중 (노이즈 제거 전 원음)" : "분할 음성 재생 중 (노이즈 제거 후, 저장본)") : (kind === "sel" ? "원본 선택 구간 재생 중" : "원본 재생 중");
+    $("btnSrcPlay").textContent = kind === "all" ? "❚❚ 일시정지" : "▶ 원본 재생";
+  }
+  function stopPlay() { $("btnSrcPlay").textContent = "▶ 원본 재생"; if (S.playing) { cancelAnimationFrame(S.playing.raf); const k = S.playing.kind; S.playing = null; if (k === "out") S.playhead = 0; render(); setLcd(); $("stMsg").textContent = "정지"; } }
+
+  // ---------- 음성인식 (시뮬레이션) ----------
+  function wordsIn(a, b) { return S.sig.spans.filter(s => s.t1 > a + 0.03 && s.t0 < b - 0.03).map(s => s.w).join(" "); }
+  function setBadge(id, txt, cls) { const e = $(id); e.textContent = txt; e.className = "badge" + (cls ? " " + cls : ""); }
+  function stopRecog() { if (S.recogTimer) { clearInterval(S.recogTimer); S.recogTimer = null; $("btnRecog").textContent = "음성인식 실행"; } }
+  function recogSource(a, b) {
+    if (S.recogTimer) { stopRecog(); setBadge("srcState", "중지됨", "warn"); return; }
+    const A = a ?? 0, B = b ?? S.sig.dur, dur = B - A, ms = Math.min(2500, 400 + dur * 90); let p = 0;
+    setBadge("srcState", "인식 중…", "warn"); $("btnRecog").textContent = "인식 중지";
+    const t0 = performance.now();
+    S.recogTimer = setInterval(() => {
+      p = Math.min(1, (performance.now() - t0) / ms); $("srcProg").style.width = (p * 100) + "%";
+      if (p >= 1) {
+        stopRecog(); $("srcText").value = wordsIn(A, B); S.srcDone = true; S.srcDirty = false;
+        setBadge("srcState", "인식 완료", "ok"); $("srcInfo").textContent = `${f3(dur)}초 음성 · 응답 ${(ms / 1000 * 0.4).toFixed(2)}초`;
+        toast("원본 음성인식 완료");
+      }
+    }, 50);
+  }
+
+  // ---------- 학습용 파일 생성 ----------
+  function slice(sig, a, b, nrLevel) {
+    const ia = Math.round(a * RATE), ib = Math.round(b * RATE), n = ib - ia;
+    const mk = () => ({ mx: new Float32Array(n), mn: new Float32Array(n), n, dur: n / RATE });
+    const before = mk(), after = mk(), fade = Math.round(0.01 * RATE), keep = [1, 0.45, 0.2, 0.07][nrLevel];
+    for (let k = 0; k < n; k++) {
+      const s = ia + k, f = Math.min(1, k / fade, (n - 1 - k) / fade);
+      before.mx[k] = sig.mx[s]; before.mn[k] = sig.mn[s];
+      const g = (sig.speech[s] ? 1 : keep) * f;
+      after.mx[k] = Math.max(0.0005, sig.mx[s] * g); after.mn[k] = Math.min(-0.0005, sig.mn[s] * g);
+    }
+    return { before, after };
+  }
+  function buildPair(silent) {
+    const [a, b] = S.sel, nr = +$("nr").value, no = S.nextNo++;
+    const { before, after } = slice(S.sig, a, b, nr);
+    const p = { no, a, b, nr, before, after, wav: `${base()}.part-${no}.wav`, txt: `${base()}.stt-${no}.txt`, text: "", saved: false };
+    S.pairs.push(p);
+    if (silent) { p.text = wordsIn(a, b); p.saved = true; }
+    return p;
+  }
+  function createPair() {
+    if (!S.sel || S.sel[1] - S.sel[0] < 0.05) { toast("먼저 ①에서 구간을 선택하세요"); return; }
+    if (S.sel[1] - S.sel[0] > MAX_SEG) { toast(`선택 구간이 ${MAX_SEG}초를 넘습니다`); return; }
+    if (S.outDirty && !confirmLike()) return;
+    const p = buildPair(false); S.curPair = S.pairs.length - 1;
+    renderChips(); selectPair(S.curPair);
+    const f = FILES[cur]; if (!f.pairs.length) f.pairs = []; f.pairs.push({}); renderList();
+    // 잘라낸 음성을 자동 인식
+    $("outText").disabled = true; $("outText").value = ""; setBadge("outState", "인식 중…", "warn");
+    let t0 = performance.now(), ms = 300 + (p.b - p.a) * 120;
+    const h = setInterval(() => {
+      const r = Math.min(1, (performance.now() - t0) / ms); $("outProg").style.width = r * 100 + "%";
+      if (r >= 1) {
+        clearInterval(h); p.text = wordsIn(p.a, p.b); p.saved = true;
+        if (S.pairs[S.curPair] === p) { $("outText").value = p.text; $("outText").disabled = false; setBadge("outState", "저장됨", "ok"); S.outDirty = false; }
+        toast(`${p.wav} / ${p.txt} 생성 완료`);
+        setTimeout(() => $("outProg").style.width = "0", 400);
+      }
+    }, 40);
+    $("stMsg").textContent = `생성: ${p.wav} (${f3(p.b - p.a)}초, 노이즈 제거 ${["없음", "약", "중", "강"][p.nr]})`;
+  }
+  function confirmLike() { toast("④의 수정 내용을 먼저 저장하세요 (Ctrl+S)"); return false; }
+
+  function renderChips() {
+    const box = $("chips");
+    if (!S.pairs.length) { box.innerHTML = '<span style="color:var(--muted);font-size:12px">이 원본에서 만든 학습용 파일 쌍이 여기에 표시됩니다</span>'; return; }
+    box.innerHTML = "";
+    S.pairs.forEach((p, i) => {
+      const c = document.createElement("span"); c.className = "chip" + (i === S.curPair ? " on" : "");
+      c.textContent = `part-${p.no}  ${f3(p.a)}~${f3(p.b)}`; c.title = `${p.wav}\n${p.txt}\n클릭: 보기 · 더블클릭: ①에 구간 다시 표시`;
+      c.onclick = () => { if (S.outDirty && i !== S.curPair) { confirmLike(); return; } selectPair(i); };
+      c.ondblclick = () => { setSel(p.a, p.b); setView(p.a - 0.5, p.b + 0.5); };
+      box.appendChild(c);
+    });
+  }
+  function selectPair(i) {
+    S.curPair = i; const p = S.pairs[i]; renderChips();
+    if (!p) { renderOut(); return; }
+    $("outSub").textContent = `${p.wav} · ${f3(p.b - p.a)}초 · 원본 ${f3(p.a)}~${f3(p.b)}초 · 노이즈 제거 ${["없음", "약", "중", "강"][p.nr]}`;
+    $("outInfo").innerHTML = `<span>${wavDir()}\\<b>${p.wav}</b></span><span class="grow"></span><span>Wave PCM signed 16 bit, 8000 Hz, mono · 10ms 페이드</span>`;
+    $("outFile").innerHTML = `${txtDir()}\\<b>${p.txt}</b>`;
+    $("outText").value = p.text; $("outText").disabled = !p.saved; S.outDirty = false;
+    setBadge("outState", p.saved ? "저장됨" : "인식 중…", p.saved ? "ok" : "warn");
+    renderOut();
+  }
+  $("tgAfter").onclick = () => { S.showBefore = false; $("tgAfter").classList.add("on"); $("tgBefore").classList.remove("on"); renderOut(); };
+  $("tgBefore").onclick = () => { S.showBefore = true; $("tgBefore").classList.add("on"); $("tgAfter").classList.remove("on"); renderOut(); };
+
+  // 텍스트 편집 표시
+  $("srcText").addEventListener("input", () => { S.srcDirty = true; setBadge("srcState", "수정됨 (저장 안 됨)", "edit"); });
+  $("outText").addEventListener("input", () => { S.outDirty = true; setBadge("outState", "수정됨 (저장 안 됨)", "edit"); });
+  let lastFocus = "outText";
+  ["srcText", "outText"].forEach(id => $(id).addEventListener("focus", () => lastFocus = id));
+
+  function save(which) {
+    if (which === "srcText") { if (!$("srcText").value.trim()) { toast("저장할 인식 결과가 없습니다"); return; } S.srcDirty = false; setBadge("srcState", "저장됨", "ok"); toast(`${fullDir()}\\${base()}.stt.txt 저장`); }
+    else { const p = S.pairs[S.curPair]; if (!p) { toast("저장할 학습용 텍스트가 없습니다"); return; } p.text = $("outText").value; S.outDirty = false; setBadge("outState", "저장됨", "ok"); toast(`${p.txt} 저장`); }
+  }
+
+  // ---------- 파일 목록 ----------
+  function renderList() {
+    const q = $("flt").value.trim(), st = $("fltSt").value, ul = $("fileList"); ul.innerHTML = "";
+    FILES.forEach((f, i) => {
+      const done = f.pairs.length > 0;
+      if (q && !f.name.includes(q)) return; if (st === "todo" && done) return; if (st === "done" && !done) return;
+      const li = document.createElement("li"); if (i === cur) li.className = "cur";
+      li.innerHTML = `<span class="st" style="color:${done ? "var(--ok)" : "var(--gray-40)"}">${done ? "✔" : "○"}</span><span class="nm">${f.name}</span><span class="dur">${done ? f.pairs.length + "쌍 · " : ""}${f.dur.toFixed(1)}초</span>`;
+      li.onclick = () => { loadFile(i); };
+      ul.appendChild(li);
+    });
+    const li = document.createElement("li"); li.style.color = "var(--muted)"; li.style.cursor = "default"; li.textContent = `… 외 ${(TOTAL - FILES.length).toLocaleString()}개 (헤더만 읽어 빠르게 표시)`; ul.appendChild(li);
+    $("fileSum").textContent = `전체 ${TOTAL.toLocaleString()}개 · 생성 완료 ${FILES.filter(x => x.pairs.length).length + 337}개 · 미처리 ${(TOTAL - FILES.filter(x => x.pairs.length).length - 337).toLocaleString()}개`;
+  }
+  $("flt").addEventListener("input", renderList); $("fltSt").addEventListener("change", renderList);
+
+  // ---------- 명령 ----------
+  const ACT = {
+    openDir: () => toast("폴더 선택 창 → D:\\녹취\\20241119 (wav 3,452개)"),
+    outDir: () => { $("dirSrc").value = SRC_DIR; $("dirWav").value = DIRS.wav; $("dirTxt").value = DIRS.txt; $("dirFull").value = DIRS.full; srcCheck(false); dirHints(); $("dirModal").classList.add("open"); },
+    pickSrc: () => { $("dirSrc").value = "D:\\녹취\\20241120"; srcCheck(false); dirHints(); },
+    pickWav: () => { $("dirWav").value = "E:\\학습데이터\\wav"; },
+    pickTxt: () => { $("dirTxt").value = "E:\\학습데이터\\part-txt"; },
+    pickFull: () => { $("dirFull").value = "E:\\학습데이터\\full-txt"; },
+    closeDir: () => $("dirModal").classList.remove("open"),
+    applyDir: () => {
+      if (!srcCheck(true)) return; // 원본 음성 폴더는 필수
+      SRC_DIR = $("dirSrc").value.trim().replace(/\\+$/, ""); $("drawerDir").textContent = SRC_DIR;
+      DIRS.wav = $("dirWav").value.trim(); DIRS.txt = $("dirTxt").value.trim(); DIRS.full = $("dirFull").value.trim();
+      $("dirModal").classList.remove("open"); showDirs(); selectPair(S.curPair);
+      $("titlePath").textContent = `${SRC_DIR}\\${FILES[cur].name}`;
+      toast(`저장 폴더 적용${DIRS.wav && DIRS.txt && DIRS.full ? "" : " (빈 항목은 원본 음성 폴더 아래 자동 생성)"}`);
+    },
+    drawer: () => $("drawer").classList.toggle("open"),
+    prev: () => loadFile(cur - 1), next: () => loadFile(cur + 1),
+    info: () => toast($("stFmt").textContent),
+    play: () => S.playing ? stopPlay() : startPlay("all", S.playhead >= S.sig.dur - 0.05 ? 0 : S.playhead, S.sig.dur),
+    playSel: () => S.sel ? startPlay("sel", S.sel[0], S.sel[1]) : toast("선택 구간이 없습니다"),
+    playOut: () => { const p = S.pairs[S.curPair]; if (!p) { toast("생성된 학습용 파일이 없습니다"); return; } startPlay("out", 0, p.after.dur); },
+    stop: stopPlay,
+    markStart: () => setSel(S.playhead, S.sel ? Math.max(S.sel[1], S.playhead + 0.05) : Math.min(S.sig.dur, S.playhead + 1)),
+    markEnd: () => setSel(S.sel ? Math.min(S.sel[0], S.playhead - 0.05) : Math.max(0, S.playhead - 1), S.playhead),
+    clearSel: () => setSel(0, 0),
+    selAll: () => setSel(0, S.sig.dur),
+    create: createPair,
+    delPair: () => { if (S.curPair < 0) return; const p = S.pairs.splice(S.curPair, 1)[0]; S.curPair = Math.min(S.curPair, S.pairs.length - 1); renderChips(); selectPair(S.curPair); if (S.curPair < 0) { $("outText").value = ""; $("outText").disabled = true; setBadge("outState", "-", ""); $("outSub").textContent = "아직 생성된 파일이 없습니다"; } FILES[cur].pairs.pop(); renderList(); toast(`${p.wav} / ${p.txt} 삭제`); },
+    zoomIn: () => zoomAt(S.sel ? (S.sel[0] + S.sel[1]) / 2 : S.playhead, 0.6),
+    zoomOut: () => zoomAt((S.view[0] + S.view[1]) / 2, 1 / 0.6),
+    zoomSel: () => S.sel && setView(S.sel[0] - (S.sel[1] - S.sel[0]) * 0.1, S.sel[1] + (S.sel[1] - S.sel[0]) * 0.1),
+    zoomAll: () => setView(0, S.sig.dur),
+    vzoomIn: () => { S.vzoom = Math.min(8, S.vzoom * 1.5); render(); },
+    vzoomOut: () => { S.vzoom = Math.max(1, S.vzoom / 1.5); render(); },
+    recog: () => recogSource(), recogSel: () => S.sel ? recogSource(S.sel[0], S.sel[1]) : toast("선택 구간이 없습니다"),
+    stopRecog: () => { stopRecog(); setBadge("srcState", "중지됨", "warn"); },
+    health: () => toast("서버 연결 확인: ws://10.0.0.21:8081 — HTTP 200 정상"),
+    settings: () => toast("설정 창 (P3 구현 단계에서 상세화)"),
+    saveSrc: () => save("srcText"), saveOut: () => save("outText"),
+    copySrc: () => { const p = S.pairs[S.curPair]; if (!p) { toast("생성된 학습용 파일이 없습니다"); return; } $("outText").value = wordsIn(p.a, p.b); S.outDirty = true; setBadge("outState", "수정됨 (저장 안 됨)", "edit"); },
+    help: () => $("help").classList.toggle("open"),
+  };
+  document.addEventListener("click", e => {
+    const m = e.target.closest(".menubar > div");
+    document.querySelectorAll(".menubar > div").forEach(x => { if (x !== m) x.classList.remove("open"); });
+    if (m && e.target.closest(".menubar > div > span")) { m.classList.toggle("open"); return; }
+    const a = e.target.closest("[data-act]"); if (!a) return;
+    e.preventDefault(); if (m) m.classList.remove("open");
+    const f = ACT[a.dataset.act]; if (f) f();
+  });
+
+  document.addEventListener("keydown", e => {
+    const inText = e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT";
+    const k = e.key, C = e.ctrlKey, Sh = e.shiftKey;
+    const run = (n) => { e.preventDefault(); ACT[n](); };
+    if (C && k === "s") { e.preventDefault(); save(inText && e.target.id === "srcText" ? "srcText" : (inText ? "outText" : lastFocus)); return; }
+    if (C && k === "Enter") return run("create");
+    if (k === "F5") return run(Sh ? "recogSel" : "recog");
+    if (k === "F1") return run("help");
+    if (k === "PageUp") return run("prev"); if (k === "PageDown") return run("next");
+    if (C && (k === "l" || k === "L")) return run("drawer");
+    if (C && (k === "o" || k === "O")) return run(Sh ? "outDir" : "openDir");
+    if (inText) return;
+    if (k === " ") return run(C ? "playOut" : (Sh ? "playSel" : "play"));
+    if (k === "[") return run("markStart"); if (k === "]") return run("markEnd");
+    if (k === "Escape") return run("clearSel");
+    if (C && (k === "a" || k === "A")) return run("selAll");
+    if (Sh && k === "ArrowUp") return run("zoomIn"); if (Sh && k === "ArrowDown") return run("zoomOut");
+    if (C && k === "ArrowUp") return run("vzoomIn"); if (C && k === "ArrowDown") return run("vzoomOut");
+    if (Sh && (k === "S" || k === "s")) return run("zoomSel"); if (Sh && (k === "A" || k === "a")) return run("zoomAll");
+    if (k === "ArrowLeft" || k === "ArrowRight") { e.preventDefault(); S.playhead = Math.max(0, Math.min(S.sig.dur, S.playhead + (k === "ArrowLeft" ? -1 : 1) * (Sh ? 1 : 0.1))); setLcd(); render(); }
+    if (k === "Delete") return run("delPair");
+  });
+
+  window.addEventListener("resize", render);
+  loadFile(cur);
+  // 시안 첫 화면: 예시 구간 선택
+  setSel(6.62, 11.05);
+})();
+</script>
+</body>
+</html>

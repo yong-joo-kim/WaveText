@@ -1,0 +1,28 @@
+{
+  "phase": "P7",
+  "gates": {
+    "P0": "approved",
+    "P1": "approved",
+    "P2": "approved",
+    "P3": "done",
+    "P4": "passed",
+    "P5": "passed",
+    "P6": "done",
+    "P7": "pending-approval"
+  },
+  "loop": 2,
+  "note": "v0.1.6: 공개 저장소용 정리(사내 IP 기본값 제거, 참고 화면 제외, 다른 제품 이름 제거), 새 GitHub 저장소에 커밋 1개짜리 기록으로 배포. 이전 기록은 로컬 backup/full-history 브랜치.",
+  "artifacts": [
+    "docs/01_pm/개발계획서.md",
+    "docs/02_requirements/requirements.md",
+    "docs/03_design/화면설계서.md",
+    "docs/03_design/ui/mockup.html",
+    "docs/04_test/검증보고서.md",
+    "docs/04_test/시험결과.md",
+    "docs/06_manual/사용설명서.md",
+    "src/wavetext/",
+    "tests/",
+    "tools/build_portable.py",
+    "CHANGELOG.md"
+  ]
+}

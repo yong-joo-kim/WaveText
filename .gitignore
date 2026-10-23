@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# 개인 설정·API 키
+*config.local.json
+
+# 시험·현장 음성 데이터는 저장소에 올리지 않는다
+data/
+tests/_out/
+
+# 참고 자료(용량 큼)
+docs/reference/ui-guideline/*.pdf
+
+# 참고 화면(GoldWave 캡처, PC 경로·내부 IP 포함)은 이 PC에만 보관
+docs/reference/ui-screens/
