@@ -9,7 +9,7 @@ import numpy as np
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import (QAction, QColor, QDoubleValidator, QFontMetrics, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap,
                            QShortcut, QTextCharFormat, QTextCursor)
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QDoubleSpinBox, QFrame,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
                                QSizePolicy, QSplitter, QStackedWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget)
@@ -19,7 +19,7 @@ from wavetext.audio import autosplit, convert, denoise, segment, wavio
 from wavetext.audio.autosplit import Seg
 from wavetext.paths import Folders
 from wavetext.stt import client
-from wavetext.ui.dialogs import FolderDialog, HelpDialog, SettingsDialog
+from wavetext.ui.dialogs import FolderDialog, HelpDialog, SettingsDialog, pick_folder
 from wavetext.ui.player import Player
 from wavetext.ui.segments import SegmentTable, fmt_t
 from wavetext.ui.theme import C
@@ -795,7 +795,7 @@ class MainWindow(QMainWindow):
             self.open_folder_dialog()
 
     def choose_source(self):
-        d = QFileDialog.getExistingDirectory(self, "원본 음성 폴더 선택", self.folders.src or str(Path.home()))
+        d = pick_folder(self, "원본 음성 폴더 선택", self.folders.src or str(Path.home()))
         if d:
             f = Folders(str(Path(d)), self.folders.full, self.folders.wav, self.folders.part_txt)
             self.open_folders(f)

@@ -14,6 +14,29 @@ from wavetext.ui.workers import HealthWorker
 SRC_HINT = "필수 입력입니다. 아래 폴더를 비워 두면 이 폴더 아래에 만듭니다."
 
 
+def make_folder_dialog(parent, title, start):
+    """폴더 선택 창. 윈도우 기본 창은 폴더만 보이므로 Qt 창을 써서 폴더 안 파일도 함께 보여 준다."""
+    dlg = QFileDialog(parent, title, start)
+    dlg.setFileMode(QFileDialog.FileMode.Directory)
+    dlg.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    dlg.setOption(QFileDialog.Option.ShowDirsOnly, False)
+    dlg.setViewMode(QFileDialog.ViewMode.Detail)
+    for label, text in ((QFileDialog.DialogLabel.LookIn, "찾는 위치"), (QFileDialog.DialogLabel.FileName, "폴더"),
+                        (QFileDialog.DialogLabel.FileType, "파일 형식"), (QFileDialog.DialogLabel.Accept, "선택"),
+                        (QFileDialog.DialogLabel.Reject, "취소")):
+        dlg.setLabelText(label, text)
+    dlg.resize(760, 480)
+    return dlg
+
+
+def pick_folder(parent, title, start):
+    """폴더를 고르게 하고 경로를 돌려준다. 취소하면 빈 문자열."""
+    dlg = make_folder_dialog(parent, title, start)
+    if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selectedFiles():
+        return str(Path(dlg.selectedFiles()[0]))
+    return ""
+
+
 def _set_prop(w, name, value):
     w.setProperty(name, value)
     w.style().unpolish(w)
@@ -82,9 +105,9 @@ class FolderDialog(QDialog):
 
     def _pick(self, edit):
         start = edit.text() or self.src.text() or str(Path.home())
-        d = QFileDialog.getExistingDirectory(self, "폴더 선택", start)
+        d = pick_folder(self, "폴더 선택", start)
         if d:
-            edit.setText(str(Path(d)))
+            edit.setText(d)
 
     def _refresh(self):
         s = self.src.text().strip().rstrip("\\/") or "원본 음성 폴더"
