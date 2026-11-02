@@ -25,6 +25,14 @@ def test_write_never_overwrites(tmp_path):
         wavio.write(p, synth_speech(0.2), 8000, 2)
 
 
+def test_write_replace_overwrites_only_when_asked(tmp_path):
+    p = tmp_path / "a.wav"
+    wavio.write(p, synth_speech(0.2), 8000, 2)
+    wavio.write(p, synth_speech(0.5), 8000, 2, replace=True)
+    assert wavio.read_info(p).frames == 4000
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_describe_goldwave_format():
     info = wavio.WavInfo(rate=8000, channels=1, sampwidth=2, frames=145696)
     assert wavio.describe(info) == "18.212초 · Wave PCM signed 16 bit, 8000 Hz, 128 kbps, mono"

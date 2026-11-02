@@ -1,8 +1,11 @@
-"""자동 분리 구간 목록: 쌍마다 저장 선택, 재생, 문장 수정."""
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QAbstractItemDelegate, QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
+"""자동 분할 구간 목록: 쌍마다 저장 선택, 재생, 문장 수정."""
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import (QAbstractItemDelegate, QAbstractItemView, QHeaderView, QStyle, QStyledItemDelegate,
+                               QStyleOptionViewItem, QTableWidget, QTableWidgetItem)
 
 from wavetext.audio import segment
+from wavetext.ui.theme import C
 
 COL_SAVE, COL_NO, COL_PLAY, COL_SPAN, COL_LEN, COL_STATE, COL_TEXT = range(7)
 HEADERS = ["저장", "번호", "재생", "구간", "길이", "상태", "문장 (눌러서 수정)"]
@@ -19,8 +22,43 @@ def seg_state(s):
     """상태 글자: 저장 여부와 길이 경고를 기호와 함께 쓴다 (NFR-06)."""
     parts = [FLAG_NAMES[s.flag]] if s.flag else []
     if s.saved_text is not None:
-        parts.append("✓ 저장됨" if " ".join(s.text.split()) == s.saved_text else "✎ 수정됨")
+        same = " ".join(s.text.split()) == s.saved_text and not s.wav_stale
+        parts.append("✓ 저장됨" if same else "✎ 수정됨")
     return " · ".join(parts) or "저장 전"
+
+
+class CheckDelegate(QStyledItemDelegate):
+    """저장 체크: 흰 네모 바탕에 파란 체크. 윈도우 기본(파란 바탕에 흰 체크)보다 잘 보인다.
+    이미지 파일 없이 그린다(폐쇄망 배포판에 SVG 모듈을 넣지 않음). 누르는 영역은 기본 동작 그대로다."""
+
+    def paint(self, p, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        style = opt.widget.style()
+        box = QRectF(style.subElementRect(QStyle.SubElement.SE_ItemViewItemCheckIndicator, opt, opt.widget))
+        checkable = bool(opt.features & QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator)
+        checked = opt.checkState == Qt.CheckState.Checked
+        opt.features &= ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, p, opt.widget)  # 행 선택 바탕
+        if not checkable:
+            return
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        side = min(box.width(), box.height(), 18.0)
+        r = QRectF(0, 0, side, side)
+        r.moveCenter(box.center())
+        blue = QColor(C["primary-50"])
+        p.setPen(QPen(blue if checked else QColor(C["gray-50"]), 1.5))
+        p.setBrush(QColor(C["gray-0"]))
+        p.drawRoundedRect(r.adjusted(0.75, 0.75, -0.75, -0.75), 3, 3)
+        if checked:
+            pen = QPen(blue, 2.4)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            p.setPen(pen)
+            x, y, s = r.left(), r.top(), r.width()
+            p.drawPolyline([QPointF(x + s * 0.24, y + s * 0.52), QPointF(x + s * 0.43, y + s * 0.70), QPointF(x + s * 0.76, y + s * 0.30)])
+        p.restore()
 
 
 class SegmentTable(QTableWidget):
@@ -32,6 +70,7 @@ class SegmentTable(QTableWidget):
         super().__init__(0, len(HEADERS), parent)
         self.segs = []
         self.setHorizontalHeaderLabels(HEADERS)
+        self.setItemDelegateForColumn(COL_SAVE, CheckDelegate(self))
         self.verticalHeader().hide()
         self.setAlternatingRowColors(False)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -55,15 +94,21 @@ class SegmentTable(QTableWidget):
         self.setCurrentCell(-1, -1)
         self.blockSignals(False)
 
-    def _fill_row(self, row, s):
+    @staticmethod
+    def _set_check(check, s):
         ro = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        check = QTableWidgetItem()
         if segment.selection_ok(s.t0, s.t1):  # 30초를 넘는 구간은 저장할 수 없다 (FR-08)
             check.setFlags(ro | Qt.ItemFlag.ItemIsUserCheckable)
             check.setCheckState(Qt.CheckState.Checked if s.selected else Qt.CheckState.Unchecked)
+            check.setToolTip("")
         else:
             check.setFlags(ro)
             check.setToolTip("30초를 넘어 저장할 수 없습니다")
+
+    def _fill_row(self, row, s):
+        ro = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        check = QTableWidgetItem()
+        self._set_check(check, s)
         self.setItem(row, COL_SAVE, check)
         cells = {COL_NO: str(s.n), COL_PLAY: "▶", COL_SPAN: f"{fmt_t(s.t0)} ~ {fmt_t(s.t1)}",
                  COL_LEN: f"{s.duration:.1f}초", COL_STATE: seg_state(s)}
@@ -74,6 +119,7 @@ class SegmentTable(QTableWidget):
                 it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.setItem(row, col, it)
         self.item(row, COL_PLAY).setToolTip("이 구간 재생 (Ctrl+Space)")
+        self.item(row, COL_SPAN).setToolTip("파형에서 이 구간의 \"시작\"/\"끝\"을 끌어 고칩니다")
         text = QTableWidgetItem(s.text)
         text.setFlags(ro | Qt.ItemFlag.ItemIsEditable)
         self.setItem(row, COL_TEXT, text)
@@ -85,6 +131,17 @@ class SegmentTable(QTableWidget):
             check = self.item(row, COL_SAVE)
             if check.flags() & Qt.ItemFlag.ItemIsUserCheckable:
                 check.setCheckState(Qt.CheckState.Checked if s.selected else Qt.CheckState.Unchecked)
+        self.blockSignals(False)
+
+    def update_row(self, row):
+        """시작·끝을 고친 행의 구간·길이·상태·문장을 다시 쓴다."""
+        s = self.segs[row]
+        self.blockSignals(True)
+        self._set_check(self.item(row, COL_SAVE), s)
+        self.item(row, COL_SPAN).setText(f"{fmt_t(s.t0)} ~ {fmt_t(s.t1)}")
+        self.item(row, COL_LEN).setText(f"{s.duration:.1f}초")
+        self.item(row, COL_STATE).setText(seg_state(s))
+        self.item(row, COL_TEXT).setText(s.text)
         self.blockSignals(False)
 
     def select_row(self, row):

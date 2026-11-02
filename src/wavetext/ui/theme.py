@@ -63,12 +63,15 @@ QMenu::item:disabled {{ color: {c['gray-40']}; }}
 QMenu::separator {{ height: 1px; background: {c['gray-10']}; margin: 4px 0; }}
 
 #toolbar {{ background: {c['gray-0']}; border-bottom: 1px solid {c['gray-20']}; }}
-QToolButton#tb {{ border: 1px solid transparent; border-radius: 6px; padding: 2px 6px; min-width: 52px; min-height: 44px; font-size: 13px; color: {c['gray-70']}; }}
+QToolButton#tb {{ border: 1px solid transparent; border-radius: 6px; padding: 2px 0; min-width: 44px; max-width: 60px; min-height: 44px; font-size: 13px; color: {c['gray-70']}; }}
 QToolButton#tb:hover {{ background: {c['gray-5']}; border-color: {c['gray-10']}; }}
 QToolButton#tb:pressed {{ background: {c['gray-10']}; }}
 QToolButton#tb:disabled {{ color: {c['gray-40']}; }}
-#lcd {{ background: {c['secondary-5']}; color: {c['secondary-70']}; border: 1px solid {c['secondary-10']}; border-radius: 6px; padding: 2px 12px; font-family: "{mono}"; font-size: 22px; font-weight: 700; }}
-#sep {{ background: {c['gray-20']}; min-width: 1px; max-width: 1px; margin: 6px 4px; }}
+#lcd {{ background: {c['secondary-5']}; color: {c['secondary-70']}; border: 1px solid {c['secondary-10']}; border-radius: 6px; padding: 2px 8px; font-family: "{mono}"; font-size: 18px; font-weight: 700; }}
+#sep {{ background: {c['gray-20']}; min-width: 1px; max-width: 1px; margin: 6px 2px; }}
+#autoSplit::handle:vertical {{ background: {c['gray-20']}; background-clip: padding; border-top: 3px solid transparent; border-bottom: 3px solid transparent; }}
+#autoSplit::handle:vertical:hover {{ background: {c['primary-50']}; }}
+#autoSplit::handle:vertical:pressed {{ background: {c['primary-60']}; }}
 
 QPushButton {{ min-height: 30px; padding: 0 12px; border: 1px solid {c['gray-50']}; border-radius: 6px; background: {c['gray-0']}; }}
 QPushButton:hover {{ background: {c['gray-5']}; }}
@@ -78,7 +81,7 @@ QPushButton[kind="primary"] {{ background: {c['primary-50']}; border-color: {c['
 QPushButton[kind="primary"]:hover {{ background: {c['primary-60']}; border-color: {c['primary-60']}; }}
 QPushButton[kind="primary"]:pressed {{ background: {c['primary-70']}; }}
 QPushButton[kind="primary"]:disabled {{ background: {c['gray-10']}; color: {c['gray-50']}; border-color: {c['gray-10']}; }}
-QPushButton#create {{ min-height: 40px; padding: 0 16px; font-size: 17px; }}
+QPushButton#create {{ min-height: 40px; padding: 0 10px; font-size: 15px; }}
 QPushButton[kind="toggle"] {{ border-radius: 0; padding: 0 12px; font-size: 13px; }}
 QPushButton[kind="toggle"]:checked {{ background: {c['primary-50']}; border-color: {c['primary-50']}; color: #ffffff; font-weight: 700; }}
 QPushButton[kind="chip"] {{ min-height: 26px; border-radius: 4px; font-size: 13px; padding: 0 12px; }}

@@ -24,7 +24,7 @@ DEFAULT_MODEL = "model_v2"
 
 DEFAULT = {
     "model": DEFAULT_MODEL,
-    "stt": {"server": dict(DEFAULT_SERVER), "api_key": ""},
+    "stt": {"server": dict(DEFAULT_SERVER), "api_key": "", "realtime_pacing": False},
     "nr_level": 2,        # 노이즈 제거: 0 사용 안 함, 1 약, 2 중, 3 강
     "folders": {"src": "", "full": "", "wav": "", "part_txt": ""},
 }
@@ -37,10 +37,10 @@ STT_DEFAULT = {
     "chunk_bytes": 640,
     "call_info": {"call_id": "wavetext", "customer_phone": "", "in_out_bound": "IB", "consultant_id": "wavetext"},
     "models": [DEFAULT_MODEL],
-    "realtime_pacing": True,
+    "realtime_pacing": False,  # 현장 녹취 비교에서 켬·끔 결과가 같았고 끄면 약 11배 빠르다
     "epd": {"auto_epd": True, "speech_start_timeout": 5000.0, "speech_end_silence_length": 1000.0, "max_speech_length": 600000.0},
     "result": {"partial_results": False, "word_alignment": False},
-    "retry": {"count": 2, "timeout_s": 30, "settle_s": 1.5},
+    "retry": {"count": 2, "timeout_s": 30},
 }
 
 
@@ -92,6 +92,7 @@ def load_stt(cfg):
     stt = copy.deepcopy(STT_DEFAULT)
     stt["server"] = server_of(cfg)
     stt["api_key"] = (cfg.get("stt") or {}).get("api_key", "")
+    stt["realtime_pacing"] = bool((cfg.get("stt") or {}).get("realtime_pacing", False))
     if cfg.get("model"):
         stt["models"] = [cfg["model"]]
     if not stt["server"].get("host"):

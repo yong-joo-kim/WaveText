@@ -1,9 +1,10 @@
-"""녹취 자동 분리: 단어 시간과 원본 에너지로 4~15초 구간을 만든다.
+"""녹취 자동 분할: 단어 시간과 원본 에너지로 4~15초 구간을 만든다.
 
 서버 단어에는 구두점이 거의 없어 문장 끝은 어말과 쉼(단어 간격 + 에너지 골짜기)으로 판단한다.
 구간은 단어 묶음에서만 만들므로 단어가 없는 묵음은 어느 구간에도 들어가지 않는다.
 """
 import bisect
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -37,10 +38,20 @@ class Seg:
     selected: bool = True
     audio: np.ndarray | None = None   # 저장될 소리 (노이즈 제거·페이드 후)
     saved_text: str | None = None     # 저장된 문장. 아직 저장 안 했으면 None
+    wav_stale: bool = False           # 시작·끝을 고친 뒤 Wav를 아직 다시 저장하지 않음
 
     @property
     def duration(self):
         return self.t1 - self.t0
+
+
+def length_flag(duration):
+    return "long" if duration > MAX_S else "short" if duration < MIN_S else ""
+
+
+def words_key(words):
+    """구간을 나눌 때 쓴 인식 결과를 알아보는 표시값. 다시 인식해 단어가 바뀌면 달라진다."""
+    return hashlib.sha1(" ".join(w["word"] for w in words).encode("utf-8")).hexdigest()[:16]
 
 
 def is_sentence_end(word):
@@ -147,7 +158,7 @@ def split(words, total, mono=None, rate=0):
     segs = []
     for a, b in groups:
         t0, t1 = edge0(a), edge1(b)
-        flag = "long" if t1 - t0 > MAX_S else "short" if t1 - t0 < MIN_S else ""
+        flag = length_flag(t1 - t0)
         segs.append(Seg(t0, t1, " ".join(w["word"] for w in ws[a:b + 1]), flag, selected=not flag))
     return segs
 

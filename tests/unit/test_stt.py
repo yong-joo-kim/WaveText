@@ -1,7 +1,9 @@
 import json
 import threading
+import time
 
 import pytest
+import websocket
 
 from wavetext import config
 from wavetext.stt import client
@@ -165,3 +167,65 @@ def test_word_spans_and_span_at():
     assert client.span_at(sp, -1.0) == 0
     assert client.span_at([], 1.0) is None
     assert client.word_spans(text, words, offset=10.0)[0][2:] == (10.0, 10.4)  # 선택 구간 인식 시간 보정
+
+
+class SlowWS(FakeWS):
+    """긴 발화처럼 응답 사이가 비는 서버: steps의 값 None은 수신 시간제한, 숫자는 그만큼 쉰 뒤 다음 응답."""
+
+    def __init__(self, replies, steps):
+        super().__init__(replies)
+        self.steps = list(steps)
+
+    def recv(self):
+        if self.steps:
+            step = self.steps.pop(0)
+            if step is None:
+                raise websocket.WebSocketTimeoutException("timed out")
+            time.sleep(step)
+        return super().recv()
+
+
+def words_reply(word, t):
+    return {"transcript": word, "words": [{"word": word, "start": t, "end": t + 0.5}]}
+
+
+def test_receive_timeout_during_long_utterance_keeps_reading():
+    """소켓 수신 시간제한(긴 발화로 응답이 없음)이 나도 뒤 결과를 버리지 않는다."""
+    ws = SlowWS([words_reply("앞", 1.0), words_reply("뒤", 200.0), {"cmd": "finished"}], [0, None, None])
+    r = client.transcribe(b"\x00\x00" * 10, cfg(), "m", "t", connect=lambda *a, **k: ws)
+    assert [w["word"] for w in r["words"]] == ["앞", "뒤"]
+
+
+def test_gap_after_finalize_waits_for_finished():
+    """응답 사이가 2초 벌어져도 finished까지 받는다."""
+    ws = SlowWS([words_reply("앞", 1.0), words_reply("뒤", 200.0), {"cmd": "finished"}], [0, 2.0])
+    r = client.transcribe(b"\x00\x00" * 10, cfg(), "m", "t", connect=lambda *a, **k: ws)
+    assert [w["word"] for w in r["words"]] == ["앞", "뒤"]
+
+
+def test_missing_finished_is_an_error():
+    """끝까지 받지 못한 결과는 성공으로 돌려주지 않는다."""
+    ws = FakeWS([words_reply("앞", 1.0)])      # finished 없이 연결 종료
+    with pytest.raises(client.SttError) as e:
+        client.transcribe(b"\x00\x00" * 10, cfg(), "m", "t", connect=lambda *a, **k: ws)
+    assert "끝까지" in str(e.value)
+
+
+def test_pacing_off_waits_longer_than_timeout_for_long_audio():
+    """페이싱을 끄면 긴 발화의 응답이 시간제한보다 늦어도 기다린다 (음성 2초 → 1초 공백 허용)."""
+    c = cfg()
+    c["retry"]["timeout_s"] = 0.5
+    ws = SlowWS([words_reply("앞", 1.0), words_reply("뒤", 200.0), {"cmd": "finished"}], [0, 1.0])
+    r = client.transcribe(b"\x00\x00" * 16000, c, "m", "t", connect=lambda *a, **k: ws)
+    assert [w["word"] for w in r["words"]] == ["앞", "뒤"]
+
+
+def test_wait_ends_when_server_stays_silent():
+    """대기에는 끝이 있다: 응답이 끊기면 음성 길이 + 시간제한 뒤 실패한다."""
+    c = cfg()
+    c["retry"]["timeout_s"] = 0.3
+    ws = SlowWS([words_reply("앞", 1.0)], [0, 5.0])
+    t = time.perf_counter()
+    with pytest.raises(client.SttError):
+        client.transcribe(b"\x00\x00" * 160, c, "m", "t", connect=lambda *a, **k: ws)
+    assert time.perf_counter() - t < 4

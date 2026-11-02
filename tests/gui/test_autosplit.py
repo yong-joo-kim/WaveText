@@ -1,15 +1,16 @@
-"""자동분리생성 화면 흐름: 인식 → 자동 분리 → 파형 클릭 ↔ 목록 → 문장 수정 → 선택 저장 → 다시 열기."""
+"""자동분할생성 화면 흐름: 인식 → 자동 분할 → 파형 클릭 ↔ 목록 → 문장 수정 → 선택 저장 → 다시 열기."""
 import threading
 import time
 
 import pytest
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from wavetext import paths
 from wavetext.audio import wavio
-from wavetext.ui import segments
+from wavetext.stt import client
+from wavetext.ui import segments, waveform
 from tests.gui.test_main_window import FakeWorker, make_pair, src_stt, win  # noqa: F401  (win은 픽스처)
 
 REAL_QUESTION = QMessageBox.question  # 픽스처가 가짜로 바꾸기 전의 실제 확인 창
@@ -36,24 +37,62 @@ def answer(monkeypatch, button):
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: button)
 
 
-def test_mode_switch_keeps_manual_panes(win, qtbot):  # noqa: F811
-    assert not win.pane_auto.isVisible() and win.pane_out.isVisible()
+def test_menu_opens_modal_popup_and_keeps_main_screen(win, qtbot):  # noqa: F811
+    assert not win.auto_dlg.isVisible()
     win.act_auto.trigger()
-    assert win.pane_auto.isVisible() and not win.pane_out.isVisible() and not win.pane_txt.isVisible()
-    assert not win.act_delete.isEnabled() and not win.act_out_stt.isEnabled()
-    win.act_auto.trigger()
-    assert not win.pane_auto.isVisible() and win.pane_out.isVisible()
-    assert win.act_delete.isEnabled()
+    assert win.auto_dlg.isVisible() and win.auto_dlg.isModal() and win.auto_dlg.windowTitle() == "자동분할생성"
+    assert win.auto_wave.duration == win.wave.duration
+    win.auto_dlg.reject()
+    assert not win.auto_dlg.isVisible() and not win.auto_mode
+    assert win.btn_create.isVisible() and win.out_text.isVisible()      # 메인 화면은 그대로
 
 
-def test_delete_blocked_on_auto_screen(win, qtbot):  # noqa: F811
-    src_stt(win, qtbot)
-    win.wave.set_selection((1.0, 2.0))
-    p = make_pair(win, qtbot)
+def test_popup_split_grows_evenly_and_user_can_move_it(auto, qtbot):
+    d, sp = auto.auto_dlg, auto.auto_split
+    d.resize(1280, 840)
+    QApplication.processEvents()
+    up, down = sp.sizes()
+    assert abs(up - down) <= 1                                           # 처음엔 위·아래가 같다
+    d.resize(1280, 1200)
+    QApplication.processEvents()
+    up2, down2 = sp.sizes()
+    assert abs((up2 - up) - (down2 - down)) <= 1 and up2 > up            # 늘린 높이를 똑같이 나눈다
+    sp.moveSplitter(up2 - 200, 1)                                        # 사용자가 경계를 위로 끈다
+    assert sp.sizes()[0] == up2 - 200 and sp.sizes()[1] == down2 + 200
+    assert auto.btn_auto_save.toolTip().startswith("선택한 구간 분할된 Wave 파일과 음성인식 Text 파일")
+
+
+def test_menu_item_is_on_menu_bar(win):  # noqa: F811
+    assert win.act_auto in win.menuBar().actions() and win.act_auto.menu() is None   # 항목을 더 고르지 않고 바로 열림
+
+
+def test_popup_noise_and_pacing_follow_main(win, qtbot):  # noqa: F811
+    win.pacing.setCurrentIndex(1)
+    win.nr.setCurrentIndex(3)
     win.act_auto.trigger()
-    win.delete_pair()
-    win.create_pair()
-    assert p.wav.exists() and len(win.pairs) == 1
+    assert win.auto_pacing.currentIndex() == 1 and win.auto_nr.currentIndex() == 3
+    win.auto_pacing.setCurrentIndex(0)
+    win.auto_nr.setCurrentIndex(1)
+    assert win.pacing.currentIndex() == 0 and win.nr.currentIndex() == 1
+    assert win.cfg["stt"]["realtime_pacing"] is True and win.cfg["nr_level"] == 1
+
+
+def test_popup_file_choice_and_messages(auto, qtbot):
+    assert auto.auto_file.count() == 2 and auto.auto_file.currentIndex() == 0
+    auto.auto_file.setCurrentIndex(1)
+    assert auto.sources[auto.cur].name == "b_0002.wav" and auto.auto_wave.duration == pytest.approx(40.0)
+    auto.btn_auto_prev.click()
+    assert auto.cur == 0 and auto.auto_file.currentIndex() == 0
+    auto.message("안내")
+    assert auto.auto_msg.text() == "안내"
+
+
+def test_recognize_button_in_popup(auto, qtbot):
+    auto.btn_auto_recog.click()
+    assert auto.btn_auto_recog.text() == "인식 중지"
+    qtbot.waitUntil(lambda: auto._auto_worker is None and bool(auto.segs), timeout=5000)
+    assert auto.btn_auto_recog.text() == "음성인식 실행"
+    assert auto.auto_text.toPlainText() == FakeWorker.reply[0]
 
 
 def test_split_after_recognition(auto, qtbot):
@@ -66,20 +105,20 @@ def test_split_after_recognition(auto, qtbot):
     assert "⚠ 짧음" in auto.seg_table.item(1, segments.COL_STATE).text()
     assert auto.seg_table.item(0, segments.COL_SAVE).checkState() == Qt.CheckState.Checked
     assert auto.seg_table.item(1, segments.COL_SAVE).checkState() == Qt.CheckState.Unchecked
-    assert [b[2] for b in auto.wave.bands] == ["✓1", "⚠2"]
+    assert [b[2] for b in auto.auto_wave.bands] == ["✓1", "⚠2"]
     assert all(x.audio is not None for x in s)
     assert paths.load_split(auto.folders, "a_0001")["segments"][1]["text"] == "네"
 
 
 def test_wave_click_selects_row_and_row_moves_wave(auto, qtbot):
     split_done(auto, qtbot)
-    auto.wave.playheadMoved.emit(5.6)
-    assert auto.seg_table.currentRow() == 1 and auto.wave.cur_band == 1
-    assert auto.src_text.extraSelections()[-1].cursor.selectedText() == "네"
+    auto.auto_wave.playheadMoved.emit(5.6)
+    assert auto.seg_table.currentRow() == 1 and auto.auto_wave.cur_band == 1
+    assert auto.auto_text.extraSelections()[-1].cursor.selectedText() == "네"
     assert auto.seg_table.state() != auto.seg_table.State.EditingState   # 파형 클릭이 편집칸을 열지 않음
     auto.seg_table.setCurrentCell(0, segments.COL_LEN)
-    assert auto.wave.cur_band == 0 and auto.wave.playhead == pytest.approx(auto.segs[0].t0)
-    assert len(auto.src_text.extraSelections()) == 2                     # 구간 + 단어 강조
+    assert auto.auto_wave.cur_band == 0 and auto.auto_wave.playhead == pytest.approx(auto.segs[0].t0)
+    assert len(auto.auto_text.extraSelections()) == 2                     # 구간 + 단어 강조
 
 
 def test_edit_text_in_row(auto, qtbot):
@@ -109,6 +148,104 @@ def test_save_selected_only(auto, qtbot, tmp_path):
     assert not (f.wav_dir / "a_0001.part-1.wav").exists()                # 수동 분할 폴더는 그대로
     auto.segs[0].text = "또 고침"
     assert segments.seg_state(auto.segs[0]) == "✎ 수정됨"
+
+
+def drag_edge(win, row, side, to_t):
+    """파형에서 row 구간을 고르고 시작(0)·끝(1) 경계를 to_t초로 끈다."""
+    win.auto_wave.playheadMoved.emit((win.segs[row].t0 + win.segs[row].t1) / 2)
+    v = win.auto_wave
+    y = v.height() // 2
+    x0 = round(v.x_of((win.segs[row].t0, win.segs[row].t1)[side]))
+    QTest.mousePress(v, Qt.MouseButton.LeftButton, pos=QPoint(x0, y))
+    QTest.mouseMove(v, QPoint(round(v.x_of(to_t)), y))
+    QTest.mouseRelease(v, Qt.MouseButton.LeftButton, pos=QPoint(round(v.x_of(to_t)), y))
+
+
+def test_drag_band_edge_moves_segment(auto, qtbot):
+    split_done(auto, qtbot)
+    s = auto.segs[0]
+    old_t0, old_t1 = s.t0, s.t1
+    drag_edge(auto, 0, 1, old_t1 - 1.2)
+    assert s.t0 == old_t0 and s.t1 == pytest.approx(old_t1 - 1.2, abs=0.05)
+    assert s.text == client.words_in(WORDS, s.t0, s.t1) and len(s.text.split()) < 8   # 끝 단어가 빠진다
+    assert len(s.audio) == round((s.t1 - s.t0) * auto.audio.rate)                      # 저장될 소리도 새 구간
+    assert s.flag == "short" and s.wav_stale
+    t = auto.seg_table
+    assert t.item(0, segments.COL_SPAN).text() == f"{segments.fmt_t(s.t0)} ~ {segments.fmt_t(s.t1)}"
+    assert t.item(0, segments.COL_TEXT).text() == s.text
+    assert auto.auto_wave.bands[0][:2] == (s.t0, s.t1)
+    auto._auto_flush()
+    g = paths.load_split(auto.folders, "a_0001")["segments"][0]
+    assert (g["t1"], g["wav_stale"]) == (round(s.t1, 3), True)
+
+
+def test_band_edge_stops_at_neighbor_and_keeps_typed_text(auto, qtbot):
+    split_done(auto, qtbot)
+    auto.segs[0].text = "직접 고친 문장"
+    drag_edge(auto, 0, 1, auto.segs[1].t0 + 0.3)
+    assert auto.segs[0].t1 == auto.segs[1].t0                     # 다음 구간과 겹치지 않는다
+    assert auto.segs[0].text == "직접 고친 문장"                    # 손으로 고친 문장은 그대로
+    drag_edge(auto, 1, 0, auto.segs[1].t1)
+    assert auto.segs[1].duration == pytest.approx(waveform.BAND_MIN_S)   # 최소 길이 아래로 줄지 않는다
+
+
+def test_edited_bounds_rewrite_saved_wav(auto, qtbot):
+    split_done(auto, qtbot)
+    auto.save_auto()
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    wav = paths.study_wav_path(auto.folders, "a_0001", 1)
+    before = wavio.read_info(wav).frames
+    s = auto.segs[0]
+    drag_edge(auto, 0, 0, s.t0 + 0.8)
+    assert segments.seg_state(s).endswith("✎ 수정됨")
+    auto.save_auto()
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    after = wavio.read_info(wav).frames
+    assert after == round((s.t1 - s.t0) * auto.audio.rate) and after < before
+    assert paths.study_txt_path(auto.folders, "a_0001", 1).read_text(encoding="utf-8") == s.text
+    assert not s.wav_stale and segments.seg_state(s).endswith("✓ 저장됨")
+    assert paths.load_split(auto.folders, "a_0001")["segments"][0]["wav_stale"] is False
+
+
+def test_band_edit_without_noise_profile_renders_in_background(auto, qtbot):
+    split_done(auto, qtbot)
+    auto._auto_nr, auto.profile = 2, None
+    other = auto.segs[1].audio
+    drag_edge(auto, 0, 1, auto.segs[0].t1 - 0.5)
+    s = auto.segs[0]
+    qtbot.waitUntil(lambda: auto._auto_worker is None and s.audio is not None, timeout=5000)
+    assert len(s.audio) == round((s.t1 - s.t0) * auto.audio.rate)
+    assert auto.segs[1].audio is other                                   # 고치지 않은 구간은 다시 만들지 않는다
+
+
+def test_popup_zoom_buttons(auto, qtbot):
+    from PySide6.QtWidgets import QToolButton
+    split_done(auto, qtbot)
+    btn = {b.text(): b for b in auto.auto_dlg.findChildren(QToolButton)}
+    v = auto.auto_wave
+    auto.seg_table.setCurrentCell(1, segments.COL_LEN)
+    s = auto.segs[1]
+    btn["확대"].click()
+    assert v.view[1] - v.view[0] < auto.audio.duration
+    assert v.view[0] <= (s.t0 + s.t1) / 2 <= v.view[1]                  # 고른 구간을 가운데에 두고 확대
+    span = v.view[1] - v.view[0]
+    btn["축소"].click()
+    assert v.view[1] - v.view[0] > span
+    btn["구간 맞춤"].click()
+    assert v.view[0] < s.t0 and s.t1 < v.view[1] and v.view[1] - v.view[0] < s.duration + 1.0
+    btn["전체"].click()
+    assert v.view == (0.0, auto.audio.duration)
+
+
+def test_band_edit_locked_while_saving(auto, qtbot):
+    split_done(auto, qtbot)
+    auto._auto_saving = True
+    auto._auto_refresh()
+    old = auto.segs[0].t1
+    drag_edge(auto, 0, 1, old - 1.0)
+    assert auto.segs[0].t1 == old
+    auto._auto_saving = False
+    auto._auto_refresh()
 
 
 def test_uncheck_saved_pair_asks_then_deletes(auto, qtbot, monkeypatch):
@@ -213,30 +350,11 @@ def test_play_button_uses_saved_sound(auto, qtbot, monkeypatch):
     assert tag == "seg" and audio is auto.segs[1].audio and rate == auto.audio.rate
     assert auto.seg_table.item(1, segments.COL_PLAY).text() == "■"
     auto._on_play_pos("seg", 0.1)
-    assert auto.wave.playhead == pytest.approx(auto.segs[1].t0 + 0.1)   # 구간 재생 위치를 원본 시간으로 표시
+    assert auto.auto_wave.playhead == pytest.approx(auto.segs[1].t0 + 0.1)   # 구간 재생 위치를 원본 시간으로 표시
     auto._on_play_stop("seg", 0.2)
     assert auto.seg_table.item(1, segments.COL_PLAY).text() == "▶"
-    auto.play_out()                                                      # Ctrl+Space도 현재 구간 재생
+    auto._auto_play_current()                                            # Ctrl+Space도 현재 구간 재생
     assert len(calls) == 2
-
-
-def test_ctrl_s_routes_to_auto_save(auto, qtbot):
-    split_done(auto, qtbot)
-    auto._save_shortcut()
-    assert auto._auto_saving
-    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
-    auto.src_text.insertPlainText("x")                                   # ② 수정 중이면 ② 저장
-    auto._save_shortcut()
-    assert not auto.src_dirty and not auto._auto_saving
-
-
-def test_menu_run_from_normal_screen_switches(win, qtbot, monkeypatch):  # noqa: F811
-    monkeypatch.setattr(FakeWorker, "words", WORDS)
-    src_stt(win, qtbot)
-    assert not win.auto_mode
-    win.run_auto_split()
-    assert win.auto_mode and win.act_auto.isChecked() and win.pane_auto.isVisible()
-    qtbot.waitUntil(lambda: win._auto_worker is None and bool(win.segs), timeout=5000)
 
 
 def test_empty_screen_guides_next_step(auto, qtbot):
@@ -255,7 +373,7 @@ def test_recognition_never_opens_delete_prompt(auto, qtbot, monkeypatch):
     src_stt(auto, qtbot)
     assert asked == [] and auto.segs == before and auto._auto_worker is None
     assert paths.study_wav_path(auto.folders, "a_0001", 1).exists()
-    assert "자동 분리 실행" in auto.st_msg.text()
+    assert "자동 분할 실행" in auto.st_msg.text()
 
 
 def test_delete_prompts_default_to_no(auto, qtbot, monkeypatch):
@@ -328,7 +446,7 @@ def test_row_pick_marks_word_of_that_segment(auto, qtbot):
     """AS-9: 구간 시작이 앞 여유라도 그 구간의 첫 단어를 강조한다."""
     split_done(auto, qtbot)
     auto.seg_table.setCurrentCell(1, segments.COL_LEN)
-    assert auto.src_text.extraSelections()[-1].cursor.selectedText() == "네"
+    assert auto.auto_text.extraSelections()[-1].cursor.selectedText() == "네"
 
 
 def test_time_label_rounds_up_minute():
@@ -347,7 +465,7 @@ def test_real_dialog_enter_key_answers_no(win, qtbot, monkeypatch, key):  # noqa
 
     monkeypatch.setattr(QMessageBox, "question", REAL_QUESTION)
     QTimer.singleShot(150, press)
-    assert win._ask_no_default("다시 자동 분리", "시험") is False
+    assert win._ask_no_default("다시 자동 분할", "시험") is False
     assert len(res) == 1
 
 
@@ -398,8 +516,111 @@ def test_record_failure_keeps_new_segments(auto, qtbot, monkeypatch):
     assert auto.segs is not old and len(auto.segs) == 2
 
 
-def test_rerecognition_marks_list_as_old(auto, qtbot):
-    """RV-5: 다시 인식하면 표의 구간이 이전 결과 기준임을 배지로 알린다."""
+def test_rerecognition_marks_list_as_old(auto, qtbot, monkeypatch):
+    """RV-5: 다시 인식해 단어가 바뀌면 표의 구간이 이전 결과 기준임을 배지로 알린다. 같으면 알리지 않는다."""
     split_done(auto, qtbot)
     src_stt(auto, qtbot)
+    assert "이전 인식 결과" not in auto.auto_badge.text()
+    monkeypatch.setattr(FakeWorker, "words", WORDS[:-1])
+    src_stt(auto, qtbot)
     assert "이전 인식 결과" in auto.auto_badge.text()
+
+
+def test_saved_pairs_mark_file_list(auto, qtbot, monkeypatch):
+    """자동분할로 저장한 원본도 파일 목록에 ✔로 표시하고, 지우면 다시 ○가 된다."""
+    split_done(auto, qtbot)
+    assert auto.file_list.item(0).text().startswith("○")
+    auto.save_auto()
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    assert auto.file_list.item(0).text().startswith("✔") and "1쌍" in auto.file_list.item(0).text()
+    assert "생성 완료 1개" in auto.drawer_sum.text()
+    answer(monkeypatch, QMessageBox.StandardButton.Yes)
+    auto.run_auto_split()
+    qtbot.waitUntil(lambda: auto._auto_worker is None, timeout=5000)
+    assert auto.file_list.item(0).text().startswith("○")
+
+
+def check_image(table, row):
+    """체크 칸의 체크 네모를 이미지로 얻는다."""
+    table.resize(900, 200)
+    rect = table.visualRect(table.model().index(row, segments.COL_SAVE))
+    return table.viewport().grab(rect).toImage(), rect
+
+
+def test_check_is_blue_on_white(auto, qtbot):
+    split_done(auto, qtbot)
+    table = auto.seg_table
+    img, _ = check_image(table, 0)                                       # 선택된 구간
+    box = [img.pixelColor(x, y) for x in range(img.width()) for y in range(img.height())]
+    blue = [c for c in box if c.blue() > 200 and c.red() < 90]
+    white = [c for c in box if c.red() > 250 and c.green() > 250 and c.blue() > 250]
+    assert blue and len(white) > len(blue)                               # 파란 체크, 흰 바탕
+    off, _ = check_image(table, 1)                                       # 해제된 구간에는 파란색이 없음
+    assert not [1 for x in range(off.width()) for y in range(off.height())
+                if off.pixelColor(x, y).blue() > 200 and off.pixelColor(x, y).red() < 90]
+
+
+def test_clicking_painted_check_toggles(auto, qtbot):
+    split_done(auto, qtbot)
+    table = auto.seg_table
+    opt_rect = table.visualRect(table.model().index(1, segments.COL_SAVE))
+    pos = opt_rect.center()
+    pos.setX(opt_rect.left() + 12)                                       # 체크 네모 위치 (칸 왼쪽)
+    QTest.mouseClick(table.viewport(), Qt.MouseButton.LeftButton, pos=pos)
+    assert auto.segs[1].selected is True
+
+
+def test_stale_mark_survives_closed_popup_and_reopen(auto, qtbot, monkeypatch):
+    """PX-2: 창을 닫고 다시 인식하거나 파일을 오가도 구간이 이전 결과 기준임을 표시한다."""
+    split_done(auto, qtbot)
+    assert "이전 인식 결과" not in auto.auto_badge.text()
+    auto.auto_dlg.reject()
+    monkeypatch.setattr(FakeWorker, "words", WORDS[:-1])
+    src_stt(auto, qtbot)
+    auto.act_auto.trigger()
+    assert "이전 인식 결과" in auto.auto_badge.text()
+    auto.load_index(1, ask=False)
+    auto.load_index(0, ask=False)
+    qtbot.waitUntil(lambda: auto._auto_worker is None, timeout=5000)
+    assert "이전 인식 결과" in auto.auto_badge.text()
+
+
+def test_old_record_without_key_is_not_marked_stale(auto, qtbot):
+    split_done(auto, qtbot)
+    rec = paths.load_split(auto.folders, "a_0001")
+    del rec["stt"], rec["version"]
+    paths.save_split(auto.folders, "a_0001", rec)
+    auto.load_index(1, ask=False)
+    auto.load_index(0, ask=False)
+    qtbot.waitUntil(lambda: auto._auto_worker is None, timeout=5000)
+    assert auto.segs and not auto._auto_stale()
+
+
+def test_discard_on_open_restores_saved_text(win, qtbot):  # noqa: F811
+    """PX-3: 메인 창 ②의 수정을 버리면 팝업과 ②에 저장된 문장이 보인다."""
+    src_stt(win, qtbot)
+    saved = win.src_text.toPlainText()
+    win.src_text.setPlainText("버릴 문장")
+    win.act_auto.trigger()                                               # 픽스처의 기본 응답은 [버리기]
+    assert win.src_text.toPlainText() == saved and win.auto_text.toPlainText() == saved
+    assert not win.src_dirty
+
+
+def test_popup_focus_stays_off_file_list(auto):
+    """PX-4: 방향키나 휠로 파일이 바뀌지 않게 한다."""
+    assert auto.auto_dlg.focusWidget() is auto.auto_wave
+    assert auto.auto_file.focusPolicy() == Qt.FocusPolicy.ClickFocus
+
+
+def test_delete_pair_recounts_from_disk(win, qtbot, monkeypatch):  # noqa: F811
+    """PX-7: Wav가 이미 없는 쌍이 있어도 표시와 실제 개수가 같다."""
+    src_stt(win, qtbot)
+    for sel in ((1.0, 2.0), (3.0, 4.0)):
+        win.wave.set_selection(sel)
+        make_pair(win, qtbot)
+    win.pairs[0].wav.unlink()
+    win.cur_pair = 1
+    answer(monkeypatch, QMessageBox.StandardButton.Yes)
+    win.delete_pair()
+    answer(monkeypatch, QMessageBox.StandardButton.Discard)
+    assert win.counts["a_0001"] == paths.pair_count(win.folders, "a_0001") == 0

@@ -73,3 +73,11 @@ def test_open_3000_files_headers_fast(tmp_path):
     paths.pair_counts(paths.Folders(src=str(src)))
     assert len(infos) == 3000
     assert time.perf_counter() - t < 5.0
+
+
+def test_realtime_pacing_setting():
+    base = {"stt": {"server": {"host": "h"}, "api_key": "k"}}
+    assert config.load_stt(base)["realtime_pacing"] is False     # 기본은 사용 안 함
+    assert config.DEFAULT["stt"]["realtime_pacing"] is False
+    base["stt"]["realtime_pacing"] = True
+    assert config.load_stt(base)["realtime_pacing"] is True

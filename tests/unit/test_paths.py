@@ -98,3 +98,13 @@ def test_split_record_roundtrip(tmp_path):
     assert paths.meta_path(f, "a").read_text(encoding="utf-8") == before  # stt.json은 그대로
     paths.split_path(f, "a").write_text("{깨진", encoding="utf-8")
     assert paths.load_split(f, "a") is None
+
+
+def test_pair_counts_include_study_folder(tmp_path):
+    f = Folders(src=str(tmp_path))
+    paths.write_text(paths.part_wav_path(f, "a", 1), "x")
+    paths.write_text(paths.study_wav_path(f, "a", 1), "x")
+    paths.write_text(paths.study_wav_path(f, "a", 2), "x")
+    paths.write_text(paths.study_wav_path(f, "b", 1), "x")
+    assert paths.pair_counts(f) == {"a": 3, "b": 1}
+    assert paths.pair_count(f, "a") == 3 and paths.pair_count(f, "없음") == 0

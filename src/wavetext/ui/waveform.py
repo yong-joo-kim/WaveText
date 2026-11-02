@@ -1,6 +1,7 @@
 """파형 보기 위젯 (FR-05, FR-07, FR-13).
 
 WaveformView: 진폭 눈금 + 파형 + 시간 눈금자. 끌어서 구간 선택, "시작"/"끝" 경계 끌기, 클릭으로 재생 위치, 휠로 확대.
+  자동 분할 띠는 현재 띠의 "시작"/"끝"을 끌어 고친다(이웃 띠와 겹치지 않게).
 OverviewBar: 파일 전체 미니 파형과 현재 보기 범위. 클릭·끌기로 보기 위치 이동.
 """
 import math
@@ -10,12 +11,14 @@ from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QFont, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from wavetext.audio.segment import MAX_SEG_S
 from wavetext.ui.theme import WAVE
 
 GUTTER = 44      # 진폭 눈금 폭
 RULER_H = 24     # 시간 눈금자 높이
 EDGE_PX = 6      # 경계 잡기 허용 거리
 MIN_VIEW_S = 0.02
+BAND_MIN_S = 0.5  # 띠 경계를 끌어 줄일 수 있는 최소 길이
 
 
 def nice_step(raw):
@@ -60,6 +63,7 @@ class WaveformView(QWidget):
     selectionChanged = Signal(object)   # (t0, t1) 또는 None
     playheadMoved = Signal(float)
     viewChanged = Signal(float, float)
+    bandEdited = Signal(int, float, float)  # 띠 번호, 새 시작, 새 끝 (끌기를 마쳤을 때)
 
     def __init__(self, parent=None, selectable=True, mono_family="Consolas"):
         super().__init__(parent)
@@ -75,8 +79,9 @@ class WaveformView(QWidget):
         self.vzoom = 1.0
         self.sel = None
         self.playhead = None
-        self.bands = []         # 자동 분리 구간 [(시작, 끝, 표시 글자, 색 이름)]
+        self.bands = []         # 자동 분할 구간 [(시작, 끝, 표시 글자, 색 이름)]
         self.cur_band = None
+        self.band_edit = False  # 현재 띠의 경계를 끌어 고칠 수 있는지
         self._drag = None
         self._font = QFont(mono_family)
         self._font.setPixelSize(12)
@@ -93,19 +98,28 @@ class WaveformView(QWidget):
         self.vzoom = 1.0
         self.sel = None
         self.playhead = None
+        self._stop_band_drag()
         self.bands = []
         self.cur_band = None
         self.update()
         self.viewChanged.emit(*self.view)
 
     def set_bands(self, bands, cur=None):
+        self._stop_band_drag()
         self.bands = bands
         self.cur_band = cur
         self.update()
 
     def set_cur_band(self, i):
+        if i != self.cur_band:
+            self._stop_band_drag()
         self.cur_band = i
         self.update()
+
+    def _stop_band_drag(self):
+        """끄는 중에 띠가 바뀌면 끌기를 버린다(엉뚱한 띠에 놓지 않게)."""
+        if self._drag is not None and "band" in self._drag:
+            self._drag = None
 
     def reveal(self, t0, t1):
         """구간이 보기 범위 밖이면 가운데로 옮긴다. 확대 배율은 구간이 들어갈 만큼만 바꾼다."""
@@ -196,7 +210,7 @@ class WaveformView(QWidget):
             x = self.x_of(t)
             p.drawLine(QPointF(x, 0), QPointF(x, r.bottom()))
             t += tstep
-        # 자동 분리 구간 띠
+        # 자동 분할 구간 띠
         for t0, t1, _, kind in self.bands:
             if t1 >= a and t0 <= b:
                 p.fillRect(QRectF(self.x_of(t0), 0, self.x_of(t1) - self.x_of(t0), r.height()), WAVE[kind])
@@ -229,18 +243,9 @@ class WaveformView(QWidget):
                 p.drawRect(QRectF(band.left(), 1, band.width(), r.height() - 2))
         # 마크 경계 + "시작"/"끝" 글자 탭 (색만으로 구분하지 않음)
         if self.sel and self.selectable:
-            p.setFont(self._mark_font)
-            fm = p.fontMetrics()
-            for t, label, d in ((self.sel[0], "시작", 1), (self.sel[1], "끝", -1)):
-                x = self.x_of(t)
-                p.setPen(QPen(WAVE["mark"], 2))
-                p.drawLine(QPointF(x, 0), QPointF(x, r.bottom()))
-                tw = fm.horizontalAdvance(label) + 10
-                bx = x if d > 0 else x - tw
-                p.fillRect(QRectF(bx, 0, tw, 18), WAVE["mark"])
-                p.setPen(WAVE["play"])
-                p.drawText(QRectF(bx, 0, tw, 18), Qt.AlignmentFlag.AlignCenter, label)
-            p.setFont(self._font)
+            self._draw_marks(p, r, *self.sel)
+        elif self._band_editable():
+            self._draw_marks(p, r, *self.bands[self.cur_band][:2])
         # 재생 위치
         if self.playhead is not None and a <= self.playhead <= b:
             x = self.x_of(self.playhead)
@@ -264,22 +269,62 @@ class WaveformView(QWidget):
             t += minor
         p.end()
 
+    def _draw_marks(self, p, r, t0, t1):
+        p.setFont(self._mark_font)
+        fm = p.fontMetrics()
+        for t, label, d in ((t0, "시작", 1), (t1, "끝", -1)):
+            x = self.x_of(t)
+            p.setPen(QPen(WAVE["mark"], 2))
+            p.drawLine(QPointF(x, 0), QPointF(x, r.bottom()))
+            tw = fm.horizontalAdvance(label) + 10
+            bx = x if d > 0 else x - tw
+            p.fillRect(QRectF(bx, 0, tw, 18), WAVE["mark"])
+            p.setPen(WAVE["play"])
+            p.drawText(QRectF(bx, 0, tw, 18), Qt.AlignmentFlag.AlignCenter, label)
+        p.setFont(self._font)
+
     # ---------- 마우스 ----------
+    def _band_editable(self):
+        return self.band_edit and not self.selectable and self.cur_band is not None and 0 <= self.cur_band < len(self.bands)
+
     def _edge_at(self, x):
-        if not self.sel or not self.selectable:
+        if self.sel and self.selectable:
+            t0, t1 = self.sel
+        elif self._band_editable():
+            t0, t1 = self.bands[self.cur_band][:2]
+        else:
             return None
-        if abs(x - self.x_of(self.sel[0])) <= EDGE_PX:
-            return 0
-        if abs(x - self.x_of(self.sel[1])) <= EDGE_PX:
-            return 1
-        return None
+        d0, d1 = abs(x - self.x_of(t0)), abs(x - self.x_of(t1))
+        if min(d0, d1) > EDGE_PX:
+            return None
+        return 0 if d0 <= d1 else 1  # 띠가 좁아 두 경계가 모두 가까우면 가까운 쪽
+
+    def _band_limits(self, i):
+        """i번 띠의 시작·끝이 움직일 수 있는 범위: 이웃 띠와 겹치지 않고 파일 안."""
+        lo = self.bands[i - 1][1] if i > 0 else 0.0
+        hi = self.bands[i + 1][0] if i + 1 < len(self.bands) else self.duration
+        return lo, hi
+
+    def _drag_band(self, side, t):
+        i = self.cur_band
+        t0, t1, label, kind = self.bands[i]
+        lo, hi = self._band_limits(i)
+        if side == 0:
+            t0 = max(lo, t1 - MAX_SEG_S, min(t, t1 - BAND_MIN_S))
+        else:
+            t1 = min(hi, t0 + MAX_SEG_S, max(t, t0 + BAND_MIN_S))
+        self.bands = self.bands[:i] + [(t0, t1, label, kind)] + self.bands[i + 1:]
+        self.update()
 
     def mousePressEvent(self, e):
         if self.mono is None or e.button() != Qt.MouseButton.LeftButton:
             return
         x = e.position().x()
         edge = self._edge_at(x)
-        self._drag = {"edge": edge} if edge is not None else {"from": self.t_of(x), "moved": False}
+        if edge is not None and not self.selectable:
+            self._drag = {"band": edge, "orig": self.bands[self.cur_band][:2]}
+        else:
+            self._drag = {"edge": edge} if edge is not None else {"from": self.t_of(x), "moved": False}
 
     def mouseMoveEvent(self, e):
         x = e.position().x()
@@ -287,7 +332,9 @@ class WaveformView(QWidget):
             self.setCursor(Qt.CursorShape.SizeHorCursor if self._edge_at(x) is not None else Qt.CursorShape.IBeamCursor)
             return
         t = self.t_of(x)
-        if self._drag.get("edge") is not None:
+        if "band" in self._drag:
+            self._drag_band(self._drag["band"], t)
+        elif self._drag.get("edge") is not None:
             s = list(self.sel)
             s[self._drag["edge"]] = t
             if s[0] > s[1]:
@@ -299,6 +346,13 @@ class WaveformView(QWidget):
                 self.set_selection((self._drag["from"], t))
 
     def mouseReleaseEvent(self, e):
+        if self._drag is not None and "band" in self._drag:
+            i, orig = self.cur_band, self._drag["orig"]
+            t0, t1 = self.bands[i][:2]
+            self._drag = None
+            if (t0, t1) != orig:
+                self.bandEdited.emit(i, t0, t1)
+            return
         if self._drag is not None and self._drag.get("edge") is None and not self._drag.get("moved"):
             self.playhead = self._drag["from"]
             self.update()

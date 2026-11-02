@@ -136,7 +136,6 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
     key = cfg.get("api_key", "")
     url = f"{server['scheme']}://{server['host']}:{server['port']}/v1/streaming?model={model}"
     timeout = cfg["retry"]["timeout_s"]
-    settle = cfg["retry"].get("settle_s", 1.5)
     connect = connect or websocket.create_connection
     try:
         hname = cfg.get("auth_header", "X-API-Key")
@@ -154,7 +153,12 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
     def reader():
         try:
             while True:
-                data = ws.recv()
+                try:
+                    data = ws.recv()
+                except websocket.WebSocketTimeoutException:  # 긴 발화는 끝날 때까지 응답이 없다. 끝났는지는 아래에서 판단한다
+                    if st["done"]:
+                        break
+                    continue
                 if data == "" or data is None:
                     break
                 try:
@@ -184,20 +188,18 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
             ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
             if on_progress:
                 on_progress(min(1.0, (pos + len(data)) / total))
-            if cfg.get("realtime_pacing", True):
+            if cfg.get("realtime_pacing", False):
                 time.sleep(len(data) / BYTES_PER_SEC)
         ws.send(json.dumps({"cmd": "finalize"}))
         t_end = time.perf_counter()
+        # 페이싱을 끄면 전송이 먼저 끝나고 서버는 음성을 차례로 처리한다. 긴 발화나 묵음은 끝나야 응답이 오므로 음성 길이만큼 더 기다린다
+        wait_s = timeout if cfg.get("realtime_pacing", False) else timeout + len(pcm) / BYTES_PER_SEC
         while not st["done"]:
             if stop is not None and stop.is_set():
                 raise SttError("사용자 중지", retry=False)
             if st["finished"]:
                 break
-            now = time.perf_counter()
-            after = [t for t, _ in msgs if t > t_end]
-            if after and now - after[-1] > settle:
-                break
-            if now - (after[-1] if after else t_end) > timeout:
+            if time.perf_counter() - max(t_end, msgs[-1][0] if msgs else t_end) > wait_s:
                 break
             time.sleep(0.05)
     except SttError:
@@ -216,6 +218,8 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
             raise SttError(f"서버 오류 {m.get('status')}", retry=m.get("status") == 500)
     if not objs:
         raise SttError("응답 없음" + (f" ({_scrub(str(st['err']), key)})" if st["err"] else ""))
+    if not st["finished"]:  # 일부만 받은 결과를 학습 데이터로 저장하지 않는다
+        raise SttError("서버 결과를 끝까지 받지 못했습니다" + (f" ({_scrub(str(st['err']), key)})" if st["err"] else ""))
     return {"transcript": merge_messages(objs), "words": extract_words(objs), "messages": objs}
 
 

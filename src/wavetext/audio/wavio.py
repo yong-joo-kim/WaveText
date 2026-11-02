@@ -2,6 +2,7 @@
 
 샘플은 float32 배열 (프레임 수, 채널 수), 범위 [-1, 1)로 다룬다.
 """
+import os
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,12 +105,13 @@ def read(path):
     return Audio(np.ascontiguousarray(samples, dtype=np.float32), WavInfo(info.rate, info.channels, info.sampwidth, frames))
 
 
-def write(path, samples, rate, sampwidth):
-    """samples (frames, channels)를 원본과 같은 형식으로 저장한다. 같은 이름 파일이 있으면 FileExistsError."""
+def write(path, samples, rate, sampwidth, replace=False):
+    """samples (frames, channels)를 원본과 같은 형식으로 저장한다. 같은 이름 파일이 있으면 FileExistsError.
+    replace=True면 다 쓴 뒤 기존 파일과 바꾼다(쓰다가 실패해도 기존 파일은 남는다)."""
     path = Path(path)
     if samples.ndim == 1:
         samples = samples[:, None]
-    if path.exists():
+    if path.exists() and not replace:
         raise FileExistsError(str(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -118,6 +120,9 @@ def write(path, samples, rate, sampwidth):
         w.setsampwidth(sampwidth)
         w.setframerate(rate)
         w.writeframes(_encode(samples.reshape(-1), sampwidth))
+    if replace:
+        os.replace(tmp, path)
+        return
     try:
         tmp.rename(path)  # 이미 있으면 Windows에서 실패 → 덮어쓰지 않음 (FR-12)
     except FileExistsError:

@@ -3,7 +3,7 @@
 - 원본 음성인식 Text: {원본이름}.stt.txt     (미지정 시 원본\\full-stt)
 - 분할 Wav:          {원본이름}.part-N.wav  (미지정 시 원본\\part-wav)
 - 분할 음성인식 Text: {원본이름}.stt-N.txt   (미지정 시 원본\\part-stt)
-- 자동분리생성 학습용: 원본\\study-full-stt, 원본\\study-part-wav, 원본\\study-part-stt (같은 이름 규칙, 위치 고정)
+- 자동분할생성 학습용: 원본\\study-full-stt, 원본\\study-part-wav, 원본\\study-part-stt (같은 이름 규칙, 위치 고정)
 """
 import json
 import os
@@ -47,7 +47,7 @@ class Folders:
         return self.resolve("part_txt")
 
     def study_dir(self, key):
-        """자동분리생성 학습용 폴더: 항상 원본 음성 폴더 아래."""
+        """자동분할생성 학습용 폴더: 항상 원본 음성 폴더 아래."""
         if not self.src.strip():
             raise ValueError("원본 음성 폴더가 지정되지 않았습니다.")
         return Path(self.src.strip()) / STUDY_SUBDIRS[key]
@@ -78,7 +78,7 @@ def save_meta(folders, base, meta):
 
 
 def split_path(folders, base):
-    """자동 분리 구간 기록: 원본 음성인식 Text 폴더의 {원본이름}.split.json (학습용 폴더에는 학습 파일만 둔다)."""
+    """자동 분할 구간 기록: 원본 음성인식 Text 폴더의 {원본이름}.split.json (학습용 폴더에는 학습 파일만 둔다)."""
     return folders.full_dir / f"{base}.split.json"
 
 
@@ -167,17 +167,29 @@ def list_sources(src):
     return sorted(files, key=lambda p: p.name.lower())
 
 
+def _pair_dirs(folders):
+    """쌍을 세는 폴더: 분할 Wav 폴더와 자동분할생성 학습용 Wav 폴더."""
+    dirs = [folders.wav_dir]
+    if folders.src.strip() and folders.study_dir("wav") != dirs[0]:
+        dirs.append(folders.study_dir("wav"))
+    return dirs
+
+
 def pair_counts(folders):
-    """분할 Wav 폴더를 한 번만 훑어 원본이름 → 쌍 개수 (FR-03, NFR-03)."""
+    """분할 Wav 폴더들을 한 번만 훑어 원본이름 → 쌍 개수 (FR-03, NFR-03)."""
     counts = {}
-    d = folders.wav_dir
-    if d.is_dir():
-        for p in d.iterdir():
-            m = PART_WAV_RE.match(p.name)
-            if m:
-                key = m.group("base").lower()
-                counts[key] = counts.get(key, 0) + 1
+    for d in _pair_dirs(folders):
+        if d.is_dir():
+            for p in d.iterdir():
+                m = PART_WAV_RE.match(p.name)
+                if m:
+                    key = m.group("base").lower()
+                    counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def pair_count(folders, base):
+    return sum(len(_numbers(d, PART_WAV_RE, base)) for d in _pair_dirs(folders))
 
 
 def read_text(path):

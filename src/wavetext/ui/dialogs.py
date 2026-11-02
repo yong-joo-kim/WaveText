@@ -212,7 +212,8 @@ class SettingsDialog(QDialog):
     def values(self):
         """저장할 값. API 키는 새로 입력했을 때만 바꾸고, 아니면 저장된 키를 유지한다."""
         key = self.key.text().strip() or self._cur_key
-        return {"stt": {"server": self.server(), "api_key": key}, "model": self.model.currentText().strip()}
+        pacing = (self.cfg.get("stt") or {}).get("realtime_pacing", False)  # 도구 모음에서 고른 값을 유지한다
+        return {"stt": {"server": self.server(), "api_key": key, "realtime_pacing": pacing}, "model": self.model.currentText().strip()}
 
 
 SHORTCUTS = [
@@ -221,7 +222,7 @@ SHORTCUTS = [
     ("Ctrl+A", "전체 선택"), ("Ctrl+Enter", "학습용 파일 생성하기"), ("F5 / Shift+F5", "원본 음성인식 / 선택 구간만 인식"), ("Ctrl+F5", "학습용 파일 다시 인식"),
     ("Ctrl+S", "편집 중인 텍스트 저장"), ("PgUp / PgDn", "이전 / 다음 파일"), ("Shift+↑ / ↓", "확대 / 축소"),
     ("Shift+S / Shift+A", "구간 맞춤 / 전체 보기"), ("Ctrl+↑ / ↓", "세로 확대 / 축소"), ("Del", "선택한 학습용 파일 쌍 삭제"),
-    ("F6", "자동분리생성 화면 전환"), ("Ctrl+L", "파일 목록"), ("Ctrl+O", "저장 폴더 설정"), ("F1", "단축키 안내"),
+    ("F6", "자동분할생성 창 열기"), ("Ctrl+L", "파일 목록"), ("Ctrl+O", "저장 폴더 설정"), ("F1", "단축키 안내"),
 ]
 
 

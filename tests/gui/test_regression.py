@@ -373,3 +373,14 @@ def test_badge_cleared_after_entering_api_key(win, monkeypatch):
     win.open_settings()
     assert "서버 미설정" not in win.src_badge.text() and "미실행" in win.src_badge.text()
     assert "미설정" not in win.lbl_server.text() and "ws://127.0.0.1:1" in win.lbl_server.text()
+
+
+def test_toolbar_pacing_is_saved_and_kept_by_server_settings(win):
+    from wavetext import config
+    from wavetext.ui.dialogs import SettingsDialog
+    assert win.pacing.currentText() == "사용 안 함"                      # 기본값
+    win.pacing.setCurrentIndex(0)
+    assert config.load_stt(win.cfg)["realtime_pacing"] is True
+    win.cfg.update(SettingsDialog(win.cfg, win).values())                # 서버 설정을 저장해도 값이 유지된다
+    assert config.load_stt(win.cfg)["realtime_pacing"] is True
+    assert not hasattr(SettingsDialog(win.cfg, win), "pacing")
