@@ -150,3 +150,18 @@ def test_extract_words_and_words_in():
     assert client.words_in(words, 7.1, 2.0) == "정입니다 여섯"       # 역순 구간
     assert client.words_in(words, 3.0, 6.0) == ""
     assert client.merge_messages(msgs) == "반갑습니다 정입니다 여섯 시까지"
+
+
+def test_word_spans_and_span_at():
+    words = [{"word": "안녕", "start": 0.0, "end": 0.4}, {"word": "하세요", "start": 0.5, "end": 0.9},
+             {"word": "안녕", "start": 1.2, "end": 1.5}, {"word": "없는말", "start": 2.0, "end": 2.2}]
+    text = "안녕 하세요. 안녕"
+    sp = client.word_spans(text, words)
+    assert [text[a:b] for a, b, *_ in sp] == ["안녕", "하세요", "안녕"]   # 같은 단어도 순서대로, 못 찾으면 건너뜀
+    assert sp[2][0] == 8
+    assert client.span_at(sp, 0.6) == 1          # 말하는 중
+    assert client.span_at(sp, 1.0) == 1          # 단어 사이 → 앞 단어
+    assert client.span_at(sp, 5.0) == 2
+    assert client.span_at(sp, -1.0) == 0
+    assert client.span_at([], 1.0) is None
+    assert client.word_spans(text, words, offset=10.0)[0][2:] == (10.0, 10.4)  # 선택 구간 인식 시간 보정

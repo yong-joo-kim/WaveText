@@ -97,6 +97,32 @@ def words_in(words, t0, t1, offset=0.0):
     return " ".join(w["word"] for w in words if a <= (w["start"] + w["end"]) / 2 + offset <= b)
 
 
+def word_spans(text, words, offset=0.0):
+    """인식 결과 글자에서 단어별 위치를 찾는다 [(글자 시작, 글자 끝, 시작 초, 끝 초)].
+    앞에서부터 차례로 찾으므로 같은 단어가 여러 번 나와도 순서대로 맞춰지고, 글을 고쳐 못 찾는 단어는 건너뛴다."""
+    out, pos = [], 0
+    for w in words:
+        i = text.find(w["word"], pos)
+        if i < 0:
+            continue
+        pos = i + len(w["word"])
+        out.append((i, pos, w["start"] + offset, w["end"] + offset))
+    return out
+
+
+def span_at(spans, t):
+    """t초에 해당하는 단어 번호: 말하는 중이면 그 단어, 단어 사이면 바로 앞 단어, 첫 단어 전이면 첫 단어."""
+    if not spans:
+        return None
+    k = 0
+    for i, s in enumerate(spans):
+        if s[2] <= t:
+            k = i
+        else:
+            break
+    return k
+
+
 def _scrub(text, key):
     return text.replace(key, "***") if key else text
 

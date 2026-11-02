@@ -6,11 +6,11 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtGui import (QAction, QColor, QDoubleValidator, QFontMetrics, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap,
-                           QShortcut)
+                           QShortcut, QTextCharFormat, QTextCursor)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDoubleSpinBox, QFileDialog, QFrame,
                                QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-                               QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+                               QSizePolicy, QStackedWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
 from wavetext import __version__, config, paths
 from wavetext.audio import convert, denoise, segment, wavio
@@ -18,6 +18,7 @@ from wavetext.paths import Folders
 from wavetext.stt import client
 from wavetext.ui.dialogs import FolderDialog, HelpDialog, SettingsDialog
 from wavetext.ui.player import Player
+from wavetext.ui.theme import C
 from wavetext.ui.waveform import OverviewBar, WaveformView
 from wavetext.ui.workers import SttWorker, TaskWorker
 
@@ -101,6 +102,9 @@ class MainWindow(QMainWindow):
         self.profile = None
         self.pairs = []
         self.meta = {"words": [], "parts": {}}  # 현재 원본의 단어 시간·분할 구간 기록 (stt.json)
+        self._src_words = ([], 0.0)  # ② 글에 해당하는 단어 시간과 시간 보정(선택 구간 인식이면 구간 시작 초)
+        self._src_spans = None       # ② 글의 단어별 글자 위치 (글이 바뀌면 다시 계산)
+        self._src_offset = 0.0
         self.cur_pair = -1
         self._src_dirty = False
         self._out_dirty = False
@@ -369,7 +373,7 @@ class MainWindow(QMainWindow):
             hh.addWidget(b)
         self.wave = WaveformView(mono_family=self.mono_family)
         self.wave.selectionChanged.connect(self._on_selection)
-        self.wave.playheadMoved.connect(lambda t: self.lcd.setText(fmt_lcd(t)))
+        self.wave.playheadMoved.connect(self._on_wave_click)
         self.wave.viewChanged.connect(lambda a, b: set_badge(self.view_badge, "none", f"보기 {a:.3f} ~ {b:.3f}초"))
         v.addWidget(self.wave, 1)
         v.addWidget(OverviewBar(self.wave))
@@ -727,6 +731,7 @@ class MainWindow(QMainWindow):
         self._spin_range()
         self.pairs = []
         self.meta = {"words": [], "parts": {}}
+        self._src_words = ([], 0.0)
         self.cur_pair = -1
         self._render_chips()
         self._show_pair()
@@ -768,6 +773,7 @@ class MainWindow(QMainWindow):
         self.src_prog.setValue(0)
         self.lbl_src_info.setText("")
         self.meta = paths.load_meta(self.folders, p.stem)  # 원본 인식 단어 시간 + 분할 구간
+        self._src_words = (self.meta.get("words") or [], 0.0)
         # ③④ 기존 학습용 쌍
         self.pairs = []
         for n in sorted(paths.existing_numbers(self.folders, p.stem)):
@@ -981,6 +987,7 @@ class MainWindow(QMainWindow):
         x = segment.cut(self.audio.samples, self.audio.rate, *self.wave.sel) if selection_only else self.audio.samples
         self._src_scope = f"선택 구간 {len(x) / self.audio.rate:.3f}초" if selection_only else f"{len(x) / self.audio.rate:.3f}초 음성"
         self._src_full = not selection_only
+        self._src_offset = self.wave.sel[0] if selection_only else 0.0  # 선택 구간 인식의 단어 시간은 구간 시작 기준
         stt = dict(got[0])
         stt["result"] = dict(stt.get("result") or {}, word_alignment=True)  # 단어별 시간 → 선택 구간 문장 가져오기
         self.src_worker = self._start_stt(convert.to_stt_pcm(x, self.audio.rate), (stt, got[1]), "src")
@@ -1032,6 +1039,7 @@ class MainWindow(QMainWindow):
         self.src_text.setReadOnly(False)
         self.btn_recog.setText("음성인식 실행")
         self._set_src_text(text)
+        self._src_words = (list(words), self._src_offset)
         self.src_prog.setValue(1000)
         self.lbl_src_info.setText(self._src_scope)
         if self._src_full:  # 원본 전체 인식 결과는 바로 저장한다(기존 파일 덮어쓰기)
@@ -1363,10 +1371,42 @@ class MainWindow(QMainWindow):
         self.src_text.setPlainText(text)
         self.src_text.blockSignals(False)
         self.src_dirty = False
+        self._src_spans = None
+        self.src_text.setExtraSelections([])
 
     def _src_edited(self):
+        self._src_spans = None  # 글을 고치면 글자 위치가 바뀌므로 다시 찾는다
+        self.src_text.setExtraSelections([])
         self.src_dirty = True
         set_badge(self.src_badge, "edit", "수정됨 (저장 안 됨)")
+
+    def _on_wave_click(self, t):
+        self.lcd.setText(fmt_lcd(t))
+        self.sync_src_text(t)
+
+    def sync_src_text(self, t):
+        """① 파형에서 누른 시각(t초)의 단어를 ② 인식 결과에서 강조하고 그 위치로 이동한다. 찾은 단어 번호를 돌려준다."""
+        words, offset = self._src_words
+        if self._src_spans is None:
+            self._src_spans = client.word_spans(self.src_text.toPlainText(), words, offset)
+        k = client.span_at(self._src_spans, t)
+        if k is None:
+            return None
+        a, b = self._src_spans[k][:2]
+        cur = self.src_text.textCursor()
+        cur.setPosition(a)
+        cur.setPosition(b, QTextCursor.MoveMode.KeepAnchor)
+        sel = QTextEdit.ExtraSelection()
+        sel.cursor = cur
+        fmt = QTextCharFormat()
+        fmt.setBackground(QColor(C["primary-10"]))
+        fmt.setForeground(QColor(C["primary-70"]))
+        sel.format = fmt
+        self.src_text.setExtraSelections([sel])
+        cur.setPosition(a)  # 글자 커서도 그 단어 앞으로 옮겨 화면에 보이게 한다
+        self.src_text.setTextCursor(cur)
+        self.src_text.ensureCursorVisible()
+        return k
 
     def _out_edited(self):
         if self._pair() is not None:

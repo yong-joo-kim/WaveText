@@ -239,3 +239,20 @@ def test_drawer_filter(win, qtbot):
     win.flt_text.setText("b_")
     assert win.file_list.item(0).isHidden()
     assert "전체 2개 · 생성 완료 1개" in win.drawer_sum.text()
+
+
+def test_wave_click_syncs_src_text(win, qtbot):
+    """① 파형을 누르면 ② 인식 결과에서 그 시각의 단어를 강조하고 글자 커서를 옮긴다."""
+    FakeWorker.reply = (" ".join(w["word"] for w in FakeWorker.words), "")
+    src_stt(win, qtbot)
+    text = win.src_text.toPlainText()
+    win.wave.playheadMoved.emit(2.6)                       # w5(2.5~2.8)
+    sel = win.src_text.extraSelections()
+    assert len(sel) == 1 and sel[0].cursor.selectedText() == "w5"
+    assert win.src_text.textCursor().position() == text.index("w5")
+    assert win.lcd.text()
+    win.src_text.insertPlainText("x")                     # 글을 고치면 강조를 지우고 다시 찾는다
+    assert win.src_text.extraSelections() == []
+    assert win.sync_src_text(0.1) == 0
+    win.load_index(1, ask=False)                           # 단어 시간이 없는 파일에서는 아무것도 하지 않음
+    assert win.sync_src_text(1.0) is None
