@@ -3,14 +3,19 @@
 - 원본 음성인식 Text: {원본이름}.stt.txt     (미지정 시 원본\\full-stt)
 - 분할 Wav:          {원본이름}.part-N.wav  (미지정 시 원본\\part-wav)
 - 분할 음성인식 Text: {원본이름}.stt-N.txt   (미지정 시 원본\\part-stt)
+- 자동분리생성 학습용: 원본\\study-full-stt, 원본\\study-part-wav, 원본\\study-part-stt (같은 이름 규칙, 위치 고정)
 """
+import json
+import os
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 PART_WAV_RE = re.compile(r"^(?P<base>.+)\.part-(?P<n>\d+)\.wav$", re.IGNORECASE)
 PART_TXT_RE = re.compile(r"^(?P<base>.+)\.stt-(?P<n>\d+)\.txt$", re.IGNORECASE)
 DEFAULT_SUBDIRS = {"full": "full-stt", "wav": "part-wav", "part_txt": "part-stt"}
+STUDY_SUBDIRS = {"full": "study-full-stt", "wav": "study-part-wav", "txt": "study-part-stt"}
 
 
 @dataclass
@@ -41,6 +46,12 @@ class Folders:
     def part_txt_dir(self):
         return self.resolve("part_txt")
 
+    def study_dir(self, key):
+        """자동분리생성 학습용 폴더: 항상 원본 음성 폴더 아래."""
+        if not self.src.strip():
+            raise ValueError("원본 음성 폴더가 지정되지 않았습니다.")
+        return Path(self.src.strip()) / STUDY_SUBDIRS[key]
+
 
 def full_stt_path(folders, base):
     return folders.full_dir / f"{base}.stt.txt"
@@ -53,7 +64,6 @@ def meta_path(folders, base):
 
 def load_meta(folders, base):
     """{"words": [{"word","start","end"}], "parts": {"N": [시작, 끝]}} — 없거나 깨졌으면 빈 기록."""
-    import json
     try:
         m = json.loads(Path(meta_path(folders, base)).read_text(encoding="utf-8"))
         if isinstance(m, dict):
@@ -64,8 +74,56 @@ def load_meta(folders, base):
 
 
 def save_meta(folders, base, meta):
-    import json
     write_text(meta_path(folders, base), json.dumps(meta, ensure_ascii=False, indent=1))
+
+
+def split_path(folders, base):
+    """자동 분리 구간 기록: 원본 음성인식 Text 폴더의 {원본이름}.split.json (학습용 폴더에는 학습 파일만 둔다)."""
+    return folders.full_dir / f"{base}.split.json"
+
+
+def load_split(folders, base):
+    """{"duration","nr","segments":[{"n","t0","t1","text","selected","flag"}]} — 없거나 깨졌으면 None."""
+    try:
+        m = json.loads(Path(split_path(folders, base)).read_text(encoding="utf-8"))
+        if isinstance(m, dict) and isinstance(m.get("segments"), list) and m.get("version") == 1:
+            return m
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def save_split(folders, base, data):
+    path = split_path(folders, base)
+    tmp = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")  # 쓰는 스레드마다 다른 임시 파일
+    write_text(tmp, json.dumps({"version": 1, **data}, ensure_ascii=False, indent=1))
+    os.replace(tmp, path)
+
+
+def study_full_path(folders, base):
+    return folders.study_dir("full") / f"{base}.stt.txt"
+
+
+def study_wav_path(folders, base, n):
+    return folders.study_dir("wav") / f"{base}.part-{n}.wav"
+
+
+def study_txt_path(folders, base, n):
+    return folders.study_dir("txt") / f"{base}.stt-{n}.txt"
+
+
+def study_numbers(folders, base):
+    return _numbers(folders.study_dir("wav"), PART_WAV_RE, base) | _numbers(folders.study_dir("txt"), PART_TXT_RE, base)
+
+
+def study_next_number(folders, base):
+    nums = study_numbers(folders, base)
+    return max(nums) + 1 if nums else 1
+
+
+def study_remove(folders, base, n):
+    for f in (study_wav_path(folders, base, n), study_txt_path(folders, base, n)):
+        f.unlink(missing_ok=True)
 
 
 def part_wav_path(folders, base, n):

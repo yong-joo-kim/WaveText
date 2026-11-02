@@ -1,4 +1,6 @@
-"""WaveText 메인 창: 4분할(① 원본 파형, ② 원본 인식 결과, ③ 학습용 Wave, ④ 학습용 Text) + 파일 목록 서랍 + 상태줄."""
+"""WaveText 메인 창: 4분할(① 원본 파형, ② 원본 인식 결과, ③ 학습용 Wave, ④ 학습용 Text) + 파일 목록 서랍 + 상태줄.
+자동분리생성 화면에서는 ③④ 자리에 구간 목록을 표시한다."""
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,11 +15,13 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDoubleSpi
                                QSizePolicy, QStackedWidget, QTextEdit, QToolButton, QVBoxLayout, QWidget)
 
 from wavetext import __version__, config, paths
-from wavetext.audio import convert, denoise, segment, wavio
+from wavetext.audio import autosplit, convert, denoise, segment, wavio
+from wavetext.audio.autosplit import Seg
 from wavetext.paths import Folders
 from wavetext.stt import client
 from wavetext.ui.dialogs import FolderDialog, HelpDialog, SettingsDialog
 from wavetext.ui.player import Player
+from wavetext.ui.segments import SegmentTable
 from wavetext.ui.theme import C
 from wavetext.ui.waveform import OverviewBar, WaveformView
 from wavetext.ui.workers import SttWorker, TaskWorker
@@ -113,6 +117,14 @@ class MainWindow(QMainWindow):
         self._workers = set()
         self._pending = {}      # 인식 중인 쌍: str(wav 경로) → Pair (파일을 바꿨다 돌아와도 같은 객체를 쓴다)
         self._creating = False  # 노이즈 제거·저장 작업 중
+        self.auto_mode = False  # 자동분리생성 화면
+        self.segs = []          # 자동 분리 구간
+        self._auto_key = None   # 구간 기록의 주인 (folders, 원본이름)
+        self._auto_nr = 0       # 구간 소리에 적용한 노이즈 제거 강도
+        self._auto_worker = None
+        self._auto_saving = False
+        self._auto_stale = False  # 구간을 나눈 뒤 원본을 다시 인식함
+        self._play_seg = None   # 재생 중인 구간
         self.player = Player(self)
         self.player.position.connect(self._on_play_pos)
         self.player.stopped.connect(self._on_play_stop)
@@ -161,8 +173,13 @@ class MainWindow(QMainWindow):
         grid.setSpacing(8)
         grid.addWidget(self._build_src_pane(), 0, 0)
         grid.addWidget(self._build_stt_pane(), 0, 1)
-        grid.addWidget(self._build_out_pane(), 1, 0)
-        grid.addWidget(self._build_txt_pane(), 1, 1)
+        self.pane_out, self.pane_txt = self._build_out_pane(), self._build_txt_pane()
+        grid.addWidget(self.pane_out, 1, 0)
+        grid.addWidget(self.pane_txt, 1, 1)
+        self.pane_auto = self._build_auto_pane()  # 자동분리생성 화면: ③④ 자리 전체
+        self.pane_auto.hide()
+        grid.addWidget(self.pane_auto, 1, 0, 1, 2)
+        self.grid = grid
         grid.setColumnStretch(0, 3)
         grid.setColumnStretch(1, 2)
         grid.setRowStretch(0, 3)
@@ -199,7 +216,7 @@ class MainWindow(QMainWindow):
         self._act(m, "전체 선택", lambda: self.wave.set_selection((0, self.wave.duration)), "Ctrl+A")
         m.addSeparator()
         self.act_create = self._act(m, "학습용 파일 생성하기", self.create_pair, "Ctrl+Return")
-        self._act(m, "선택한 학습용 파일 쌍 삭제", self.delete_pair, "Del")
+        self.act_delete = self._act(m, "선택한 학습용 파일 쌍 삭제", self.delete_pair, "Del")
         m = mb.addMenu("보기(&V)")
         self._act(m, "확대", lambda: self._zoom(0.6), "Shift+Up")
         self._act(m, "축소", lambda: self._zoom(1 / 0.6), "Shift+Down")
@@ -222,7 +239,13 @@ class MainWindow(QMainWindow):
         self._act(m, "선택 구간만 인식", lambda: self.run_src_stt(True), "Shift+F5")
         self._act(m, "인식 중지", self.stop_src_stt)
         m.addSeparator()
-        self._act(m, "학습용 파일 다시 인식", self.run_out_stt, "Ctrl+F5")
+        self.act_out_stt = self._act(m, "학습용 파일 다시 인식", self.run_out_stt, "Ctrl+F5")
+        m = mb.addMenu("자동분리생성(&A)")
+        self.act_auto = self._act(m, "자동분리생성 화면", self.toggle_auto, "F6")
+        self.act_auto.setCheckable(True)
+        m.addSeparator()
+        self._act(m, "자동 분리 실행", self.run_auto_split)
+        self._act(m, "선택 구간 저장", self.save_auto)
         m = mb.addMenu("설정(&O)")
         self._act(m, "음성인식 서버 설정…", self.open_settings)  # 저장 폴더 설정은 파일 메뉴에만 둔다
         m = mb.addMenu("도움말(&H)")
@@ -231,7 +254,7 @@ class MainWindow(QMainWindow):
         # Ctrl+S: 숨긴 메뉴 항목은 비활성화되어 단축키가 동작하지 않으므로 QShortcut을 쓴다 (M-1)
         self.sc_save = QShortcut(QKeySequence.StandardKey.Save, self)
         self.sc_save.setContext(Qt.ShortcutContext.WindowShortcut)
-        self.sc_save.activated.connect(lambda: self.save_text(None))
+        self.sc_save.activated.connect(self._save_shortcut)
         # 메뉴줄 오른쪽: 이전/현재/다음
         nav = self._nav = QWidget(mb)  # 참조를 유지해야 Python이 위젯을 지우지 않는다
         h = QHBoxLayout(nav)
@@ -527,6 +550,45 @@ class MainWindow(QMainWindow):
         v.addWidget(foot)
         return f
 
+    def _build_auto_pane(self):
+        f, v, hh, foot, fh = self._pane(3, "자동 분리 구간")
+        self.auto_badge = QLabel()
+        set_badge(self.auto_badge, "none", "-")
+        hh.addWidget(self.auto_badge)
+        hh.addStretch(1)
+        self.btn_auto_all = QPushButton("전체 선택")
+        self.btn_auto_all.setToolTip("모든 구간의 저장 선택을 켜거나 끕니다")
+        self.btn_auto_all.clicked.connect(self.auto_select_all)
+        self.btn_auto_run = QPushButton("자동 분리 실행")
+        self.btn_auto_run.setToolTip("원본 인식 결과를 4~15초 구간으로 나눕니다. 도구막대의 노이즈 제거 강도를 적용합니다")
+        self.btn_auto_run.clicked.connect(self.run_auto_split)
+        self.btn_auto_save = QPushButton("선택 저장")
+        self.btn_auto_save.setProperty("kind", "primary")
+        self.btn_auto_save.setToolTip("원본 인식 Text와 선택한 구간을 학습용 폴더에 저장 (Ctrl+S)")
+        self.btn_auto_save.clicked.connect(self.save_auto)
+        for b in (self.btn_auto_all, self.btn_auto_run, self.btn_auto_save):
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            hh.addWidget(b)
+        self.auto_stack = QStackedWidget()
+        self.auto_empty = QLabel(objectName="empty")
+        self.auto_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.seg_table = SegmentTable()
+        self.seg_table.picked.connect(self._on_seg_picked)
+        self.seg_table.playClicked.connect(self.play_seg)
+        self.seg_table.edited.connect(self._on_seg_edited)
+        self.auto_stack.addWidget(self.auto_empty)
+        self.auto_stack.addWidget(self.seg_table)
+        v.addWidget(self.auto_stack, 1)
+        self.lbl_auto_dirs = QLabel()
+        self.lbl_auto_dirs.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        fh.addWidget(self.lbl_auto_dirs, 1)
+        v.addWidget(foot)
+        self._auto_timer = QTimer(self)  # 문장 수정은 잠시 뒤 구간 기록에 저장한다
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.setInterval(500)
+        self._auto_timer.timeout.connect(self._auto_write_record)
+        return f
+
     def _build_status(self):
         box = QWidget(objectName="statusBox")
         box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
@@ -621,6 +683,9 @@ class MainWindow(QMainWindow):
     def open_folders(self, folders):
         if not self.confirm_unsaved():
             return
+        self.stop_src_stt()
+        self._auto_flush()
+        self._auto_cancel()
         self.folders = folders
         self.cfg["folders"] = {"src": folders.src, "full": folders.full, "wav": folders.wav, "part_txt": folders.part_txt}
         self._save_cfg()
@@ -732,6 +797,7 @@ class MainWindow(QMainWindow):
         self.pairs = []
         self.meta = {"words": [], "parts": {}}
         self._src_words = ([], 0.0)
+        self._auto_set_segs([], None)
         self.cur_pair = -1
         self._render_chips()
         self._show_pair()
@@ -748,6 +814,8 @@ class MainWindow(QMainWindow):
             return
         self.player.stop()
         self.stop_src_stt()
+        self._auto_flush()
+        self._auto_cancel()
         self.cur = i
         p = self.sources[i]
         self.lbl_cur.setText(f"{p.name}  ({i + 1} / {len(self.sources):,})")
@@ -774,6 +842,7 @@ class MainWindow(QMainWindow):
         self.lbl_src_info.setText("")
         self.meta = paths.load_meta(self.folders, p.stem)  # 원본 인식 단어 시간 + 분할 구간
         self._src_words = (self.meta.get("words") or [], 0.0)
+        self._auto_load(p.stem)
         # ③④ 기존 학습용 쌍
         self.pairs = []
         for n in sorted(paths.existing_numbers(self.folders, p.stem)):
@@ -905,6 +974,9 @@ class MainWindow(QMainWindow):
             self.message("원본 선택 구간 재생 중")
 
     def play_out(self):
+        if self.auto_mode:
+            self.play_seg(self.seg_table.currentRow())
+            return
         p = self._pair()
         if p is None or not len(p.after):
             self.message("생성된 학습용 파일이 없습니다.")
@@ -917,6 +989,9 @@ class MainWindow(QMainWindow):
         if tag in ("src", "sel"):
             self.wave.set_playhead(t)
             self.lcd.setText(fmt_lcd(t))
+        elif tag == "seg" and self._play_seg is not None:
+            self.wave.set_playhead(self._play_seg.t0 + t)
+            self.lcd.setText(fmt_lcd(self._play_seg.t0 + t))
         elif tag == "out":
             self.out_wave.set_playhead(t)
 
@@ -928,6 +1003,9 @@ class MainWindow(QMainWindow):
                 self.lcd.setText(fmt_lcd(t))
         elif tag == "out":
             self.out_wave.set_playhead(None)
+        elif tag == "seg":
+            self._play_seg = None
+            self.seg_table.set_playing(None)
         self.message("정지")
 
     # ================= 음성인식 =================
@@ -1053,6 +1131,9 @@ class MainWindow(QMainWindow):
                 set_badge(self.src_badge, "ok", "자동 저장됨")
                 note = "" if words else " · 단어 시간 정보 없음(선택 구간 문장 가져오기 불가)"
                 self.message(f"원본 음성인식 완료 · {paths.full_stt_path(self.folders, base)} 자동 저장{note}", error=not words)
+            self._auto_refresh()
+            if self.auto_mode and words:
+                self._auto_after_stt(base)
             return
         self.src_dirty = True  # 선택 구간만 인식한 결과는 전체 결과를 덮어쓰지 않도록 자동 저장하지 않는다
         set_badge(self.src_badge, "edit", "선택 구간 인식 (저장 안 됨)")
@@ -1068,7 +1149,7 @@ class MainWindow(QMainWindow):
 
     # ================= 학습용 파일 생성 =================
     def create_pair(self):
-        if self.audio is None:
+        if self.audio is None or self.auto_mode:
             return
         sel = self.wave.sel
         if not sel or not segment.selection_ok(*sel):
@@ -1334,7 +1415,7 @@ class MainWindow(QMainWindow):
 
     def delete_pair(self):
         p = self._pair()
-        if p is None:
+        if p is None or self.auto_mode:  # ③④가 숨겨진 상태에서 쌍이 지워지지 않게
             return
         r = QMessageBox.question(self, "학습용 파일 쌍 삭제", f"다음 두 파일을 삭제할까요? 되돌릴 수 없습니다.\n\n{p.wav}\n{p.txt}")
         if r != QMessageBox.StandardButton.Yes:
@@ -1382,6 +1463,8 @@ class MainWindow(QMainWindow):
 
     def _on_wave_click(self, t):
         self.lcd.setText(fmt_lcd(t))
+        if self.auto_mode:
+            self._auto_locate(t)
         self.sync_src_text(t)
 
     def sync_src_text(self, t):
@@ -1392,21 +1475,32 @@ class MainWindow(QMainWindow):
         k = client.span_at(self._src_spans, t)
         if k is None:
             return None
+        seg = self._cur_seg()
+        inside = [s for s in self._src_spans if seg and seg.t0 <= (s[2] + s[3]) / 2 <= seg.t1]
+        if inside and self._src_spans[k] not in inside:  # 구간 앞 여유를 누르면 앞 구간 단어가 아니라 구간 첫 단어
+            k = self._src_spans.index(inside[0])
         a, b = self._src_spans[k][:2]
+        marks = [self._src_mark(a, b, C["primary-10"], C["primary-70"])]
+        if inside:  # 자동 분리 화면: 현재 구간 문장 전체를 옅게 표시한다
+            marks.insert(0, self._src_mark(inside[0][0], inside[-1][1], C["secondary-5"], C["gray-90"]))
+        self.src_text.setExtraSelections(marks)
+        cur = self.src_text.textCursor()
+        cur.setPosition(a)  # 글자 커서도 그 단어 앞으로 옮겨 화면에 보이게 한다
+        self.src_text.setTextCursor(cur)
+        self.src_text.ensureCursorVisible()
+        return k
+
+    def _src_mark(self, a, b, bg, fg):
         cur = self.src_text.textCursor()
         cur.setPosition(a)
         cur.setPosition(b, QTextCursor.MoveMode.KeepAnchor)
         sel = QTextEdit.ExtraSelection()
         sel.cursor = cur
         fmt = QTextCharFormat()
-        fmt.setBackground(QColor(C["primary-10"]))
-        fmt.setForeground(QColor(C["primary-70"]))
+        fmt.setBackground(QColor(bg))
+        fmt.setForeground(QColor(fg))
         sel.format = fmt
-        self.src_text.setExtraSelections([sel])
-        cur.setPosition(a)  # 글자 커서도 그 단어 앞으로 옮겨 화면에 보이게 한다
-        self.src_text.setTextCursor(cur)
-        self.src_text.ensureCursorVisible()
-        return k
+        return sel
 
     def _out_edited(self):
         if self._pair() is not None:
@@ -1450,6 +1544,12 @@ class MainWindow(QMainWindow):
         self.out_text.setPlainText(text)  # textChanged → 수정됨 표시
         self.message(f"원본 {p.t0:.3f}~{p.t1:.3f}초 구간 문장을 가져왔습니다. [저장]을 누르면 저장됩니다.")
 
+    def _save_shortcut(self):
+        if self.auto_mode and not self.src_dirty:
+            self.save_auto()
+        else:
+            self.save_text(None)
+
     def save_text(self, which=None, quiet=False):
         """②(원본 인식 결과) 또는 ④(학습용 Text)를 저장한다. 기존 파일이 있으면 덮어쓴다."""
         if which is None:
@@ -1489,6 +1589,406 @@ class MainWindow(QMainWindow):
             self.message(f"{path} 저장")
         return True
 
+    # ================= 자동분리생성 =================
+    def toggle_auto(self, on):
+        if on == self.auto_mode:
+            return
+        if on and self.out_dirty and not self.confirm_unsaved():
+            self.act_auto.setChecked(False)
+            return
+        self._auto_flush()
+        self.player.stop()
+        self.auto_mode = on
+        self.pane_out.setVisible(not on)
+        self.pane_txt.setVisible(not on)
+        self.pane_auto.setVisible(on)
+        self.grid.setRowStretch(0, 1 if on else 3)
+        self.grid.setRowStretch(1, 1 if on else 2)
+        for a in (self.act_delete, self.act_out_stt):  # 숨겨진 ③④가 단축키로 동작하지 않게 한다
+            a.setEnabled(not on)
+        self._auto_bands()
+        self._auto_refresh()
+        self._update_controls()
+        if on:
+            self._auto_render_missing()
+            self.message("자동분리생성 화면입니다. ② [음성인식 실행] 후 구간을 확인하고 저장할 쌍을 선택하세요.")
+
+    def _cur_seg(self):
+        if not self.auto_mode:
+            return None
+        row = self.seg_table.currentRow()
+        return self.segs[row] if 0 <= row < len(self.segs) else None
+
+    def _auto_set_segs(self, segs, key):
+        self._auto_timer.stop()
+        self.segs = segs
+        self._auto_key = key
+        self._auto_stale = False
+        self._auto_mark_saved()
+        self.seg_table.set_segs(segs)
+        self.auto_stack.setCurrentIndex(1 if segs else 0)
+        self._auto_bands()
+        self._auto_refresh()
+
+    def _auto_mark_saved(self):
+        """파일이 실제로 있으면 저장된 것으로 본다(기록과 파일이 어긋나지 않게)."""
+        if self._auto_key is None:
+            return
+        folders, base = self._auto_key
+        for s in self.segs:
+            ok = paths.study_wav_path(folders, base, s.n).exists() and paths.study_txt_path(folders, base, s.n).exists()
+            s.saved_text = (paths.read_text(paths.study_txt_path(folders, base, s.n)) or "") if ok else None
+
+    def _auto_bands(self):
+        def kind(s):
+            return "band_short" if s.flag == "short" else "band_on" if s.selected else "band_off"
+
+        def label(s):
+            return f"{'⚠' if s.flag else '✓' if s.selected else ''}{s.n}"
+
+        bands = [(s.t0, s.t1, label(s), kind(s)) for s in self.segs] if self.auto_mode else []
+        row = self.seg_table.currentRow()
+        self.wave.set_bands(bands, row if bands and row >= 0 else None)
+
+    def _auto_refresh(self):
+        """구간 창의 안내 문구·배지·버튼을 현재 상태에 맞춘다."""
+        busy = self._auto_worker is not None or self._auto_saving
+        words = bool(self.meta.get("words"))
+        self.btn_auto_run.setEnabled(words and not busy)
+        self.btn_auto_save.setEnabled(bool(self.segs) and not busy)
+        self.btn_auto_all.setEnabled(bool(self.segs) and not busy)
+        if self.audio is None:
+            self.auto_empty.setText("[파일 목록]에서 원본 녹취 파일을 고르세요")
+        elif not words:
+            self.auto_empty.setText("② [음성인식 실행]을 누르면 인식이 끝난 뒤 구간을 자동으로 나눕니다")
+        else:
+            self.auto_empty.setText("[자동 분리 실행]을 누르면 4~15초 구간으로 나눕니다")
+        if busy:
+            set_badge(self.auto_badge, "warn", "저장 중…" if self._auto_saving else "소리 준비 중…")
+        elif self.segs and self._auto_stale:
+            set_badge(self.auto_badge, "warn", "구간은 이전 인식 결과 기준 · 새로 나누려면 [자동 분리 실행]")
+        elif self.segs:
+            done = sum(1 for s in self.segs if s.saved_text is not None)
+            on = sum(1 for s in self.segs if s.selected)
+            set_badge(self.auto_badge, "ok" if done else "none", f"{len(self.segs)}구간 · 선택 {on} · 저장됨 {done}")
+        else:
+            set_badge(self.auto_badge, "none", "-")
+        try:
+            self.lbl_auto_dirs.setText("저장 폴더: " + " · ".join(str(self.folders.study_dir(k)) for k in ("full", "wav", "txt")))
+        except ValueError:
+            self.lbl_auto_dirs.setText("저장 폴더 미설정")
+
+    def _auto_load(self, base):
+        """저장해 둔 구간 기록을 읽는다. 원본이 바뀌었으면(길이가 다르면) 기록을 쓰지 않는다."""
+        rec = paths.load_split(self.folders, base)
+        segs = []
+        try:
+            if rec and abs(float(rec.get("duration", -1)) - self.audio.duration) < 0.01:
+                segs = [Seg(float(g["t0"]), float(g["t1"]), str(g.get("text", "")), str(g.get("flag", "")), int(g["n"]),
+                            bool(g.get("selected"))) for g in rec["segments"]]
+                self._auto_nr = int(rec.get("nr", 0))
+        except (KeyError, TypeError, ValueError):
+            segs = []
+        self._auto_set_segs(segs, (self.folders, base))
+        if self.auto_mode:
+            self._auto_render_missing()
+
+    @staticmethod
+    def _auto_record(duration, nr, segs):
+        return {"duration": round(duration, 3), "nr": nr,
+                "segments": [{"n": s.n, "t0": round(s.t0, 3), "t1": round(s.t1, 3), "text": s.text,
+                              "selected": s.selected, "flag": s.flag} for s in segs]}
+
+    def _auto_write_record(self):
+        if self._auto_key is None or not self.segs or self.audio is None:
+            return
+        folders, base = self._auto_key
+        try:
+            paths.save_split(folders, base, self._auto_record(self.audio.duration, self._auto_nr, self.segs))
+        except OSError as e:
+            self.message(f"구간 기록 저장 실패: {e}", error=True)
+
+    def _auto_flush(self):
+        """열린 문장 수정칸을 확정하고, 미뤄 둔 구간 기록 저장을 바로 한다."""
+        self.seg_table.commit()
+        if self._auto_timer.isActive():
+            self._auto_timer.stop()
+            self._auto_write_record()
+
+    def _auto_cancel(self):
+        w = self._auto_worker
+        if w is not None:
+            w.cancel()
+            self._auto_worker = None  # 늦게 온 결과는 _on_auto_done에서 버린다
+            if w.tag["new"]:  # 저장본 삭제와 기록이 끝난 뒤 넘어가야 돌아왔을 때 파일과 기록이 맞는다
+                w.wait(30000)
+                self.seg_table.setEnabled(True)
+
+    def _on_seg_edited(self):
+        self._auto_bands()
+        self._auto_refresh()
+        self._auto_timer.start()
+
+    def _on_seg_picked(self, i):
+        s = self.segs[i]
+        self.wave.set_cur_band(i)
+        self.wave.reveal(s.t0, s.t1)
+        self.wave.set_playhead(s.t0)
+        self.lcd.setText(fmt_lcd(s.t0))
+        self.sync_src_text(s.t0)
+
+    def _auto_locate(self, t):
+        i = autosplit.index_at(self.segs, t)
+        if i is not None:
+            self.seg_table.select_row(i)
+            self.wave.set_cur_band(i)
+
+    def auto_select_all(self):
+        can = [s for s in self.segs if segment.selection_ok(s.t0, s.t1)]
+        on = not all(s.selected for s in can)
+        for s in can:
+            s.selected = on
+        self.seg_table.refresh_states()
+        self._on_seg_edited()
+
+    def play_seg(self, i):
+        if not 0 <= i < len(self.segs):
+            self.message("재생할 구간을 고르세요.")
+            return
+        s = self.segs[i]
+        if self.player.is_playing("seg") and self._play_seg is s:
+            self.player.stop()
+            return
+        if s.audio is None:
+            self.message("구간 소리를 준비하는 중입니다. 잠시 후 다시 누르세요.")
+            return
+        self.player.stop()
+        self._play_seg = s
+        if self.player.play("seg", s.audio, self.audio.rate):
+            self.seg_table.set_playing(i)
+            self.message(f"구간 {s.n} 재생 중 (저장될 소리)")
+        else:
+            self._play_seg = None
+
+    def _auto_enter(self):
+        """메뉴로 실행했을 때 자동분리생성 화면으로 먼저 옮긴다."""
+        if not self.auto_mode:
+            self.act_auto.trigger()
+        return self.auto_mode
+
+    def _auto_busy(self):
+        """확인 창이 떠 있는 동안 인식 결과가 끼어들지 않도록 다른 작업 중에는 시작하지 않는다."""
+        if self.src_worker is not None:
+            self.message("원본 음성인식이 끝난 뒤 다시 누르세요.")
+        elif self._auto_worker is not None or self._auto_saving:
+            self.message("구간 작업이 끝난 뒤 다시 누르세요.")
+        else:
+            return False
+        return True
+
+    def _auto_after_stt(self, base):
+        """인식이 끝나면 구간을 나눈다. 이전 구간이나 저장본이 있으면 입력 중에 확인 창이 뜨지 않게 사용자가 직접 실행한다."""
+        if self.segs or paths.study_numbers(self.folders, base):
+            self._auto_stale = bool(self.segs)
+            self._auto_refresh()
+            self.message("원본 음성인식을 마쳤습니다. 이전 구간은 그대로입니다. 새 결과로 나누려면 [자동 분리 실행]을 누르세요.")
+        else:
+            self.run_auto_split()
+
+    def _ask_no_default(self, title, text):
+        r = QMessageBox.question(self, title, text, QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                 QMessageBox.StandardButton.No)
+        return r == QMessageBox.StandardButton.Yes
+
+    def run_auto_split(self):
+        if self.audio is None or not self._auto_enter() or self._auto_busy():
+            return
+        words = self.meta.get("words") or []
+        if not words:
+            self.message("② 원본 음성인식을 먼저 실행하세요(단어 시간 정보가 필요합니다).", error=True)
+            return
+        self._auto_flush()
+        base = self.sources[self.cur].stem
+        saved = paths.study_numbers(self.folders, base)
+        if saved or self.segs:
+            note = (f"학습용 폴더에 저장된 {len(saved)}쌍과 원본 인식 Text도 삭제합니다. 되돌릴 수 없습니다." if saved
+                    else "수정한 문장과 저장 선택이 사라집니다.")
+            if not self._ask_no_default("다시 자동 분리", f"이전 구간을 버리고 다시 나눌까요? {note}"):
+                self.message("이전 구간을 유지합니다. ② 문장이 구간 문장과 다를 수 있습니다.")
+                return
+        self._auto_start(self.meta.get("words") or words, self.segs, sorted(saved), self.nr.currentIndex())
+
+    def _auto_render_missing(self):
+        """다시 연 파일의 구간 소리를 기록된 강도로 만든다."""
+        if self.segs and self.audio is not None and self._auto_worker is None and any(s.audio is None for s in self.segs):
+            self._auto_start(None, self.segs, [], self._auto_nr)
+
+    def _auto_start(self, words, segs, remove, level):
+        """words가 있으면 새로 나누고 이전 저장본(remove)을 지운다. 없으면 segs의 소리만 만든다."""
+        a = self.audio
+        rate, samples, profile = a.rate, a.samples, self.profile
+        folders, base = self.folders, self.sources[self.cur].stem
+        mono = a.mono()
+        duration = a.duration
+        stop = threading.Event()
+
+        def job():  # 작업 스레드: 분리 → 잡음 추정 → 구간별 노이즈 제거·페이드 → 이전 저장본 삭제 → 번호 부여
+            out = autosplit.split(words, duration, mono, rate) if words else segs
+            prof = profile if profile is not None or not level else denoise.estimate_profile(mono, rate)
+            full = autosplit.render(samples, rate, out, level, prof, stop)
+            if stop.is_set():
+                return {"cancelled": True}
+            if words:
+                try:
+                    for n in remove:
+                        paths.study_remove(folders, base, n)
+                    if remove:
+                        paths.study_full_path(folders, base).unlink(missing_ok=True)
+                except OSError as e:  # 일부만 지워졌으면 이전 구간을 두고 실제 파일 상태를 다시 표시한다
+                    return {"remove_failed": str(e)}
+                first = paths.study_next_number(folders, base)
+                for i, s in enumerate(out):
+                    s.n = first + i
+                try:  # 저장본을 지운 뒤에는 파일을 옮겨도 새 구간이 남도록 여기서 기록한다
+                    paths.save_split(folders, base, self._auto_record(duration, level, out))
+                except OSError:
+                    pass  # 화면에 표시한 뒤 다시 쓴다
+            return {"segs": out, "profile": prof, "full": full, "new": bool(words), "nr": level}
+
+        self.player.stop()
+        w = TaskWorker(job, self)
+        w.tag = {"folders": folders, "base": base, "audio": a, "new": bool(words)}
+        w.cancel = stop.set  # 파일을 옮기거나 창을 닫으면 구간 사이에서 멈춘다
+        self.seg_table.setEnabled(not words)  # 새로 나누는 동안 고친 내용은 어차피 사라지므로 잠근다
+        w.result.connect(self._on_auto_done)
+        self._workers.add(w)
+        self._auto_worker = w
+        self._auto_refresh()
+        self.message("구간을 나누는 중… (노이즈 제거)" if words else "구간 소리를 준비하는 중…")
+        w.start()
+
+    def _on_auto_done(self, w, r, err):
+        self._workers.discard(w)
+        w.wait(2000)
+        w.deleteLater()
+        if w is not self._auto_worker:  # 다른 파일로 넘어간 뒤 도착한 결과는 버린다
+            return
+        self._auto_worker = None
+        self.seg_table.setEnabled(True)
+        self._auto_refresh()
+        if r is None or "remove_failed" in r:
+            self._auto_mark_saved()
+            self.seg_table.refresh_states()
+            self._auto_refresh()
+            why = err if r is None else (f"이전 저장본을 삭제하지 못했습니다 ({r['remove_failed']}). 일부는 이미 삭제됐을 수 있습니다. "
+                                         "표의 상태를 확인하고, 다시 만들려면 [선택 저장]을 누르세요")
+            self.message(f"자동 분리 실패: {why}", error=True)
+            return
+        if r.get("cancelled"):
+            return
+        if self.profile is None:
+            self.profile = r["profile"]
+        if not r["new"]:
+            self.message("구간 소리를 준비했습니다.")
+            return
+        self._auto_nr = r["nr"]
+        self._auto_set_segs(r["segs"], (w.tag["folders"], w.tag["base"]))
+        self._auto_write_record()
+        short = sum(1 for s in self.segs if s.flag)
+        note = "" if r["full"] else " · 일부 구간은 노이즈 제거를 적용하지 못했습니다"
+        self.message(f"{len(self.segs)}구간으로 나눴습니다{f' (길이 확인 필요 {short}구간, 저장 선택 해제)' if short else ''}{note}. "
+                     "들어 보고 문장을 고친 뒤 [선택 저장]을 누르세요.", error=not r["full"])
+
+    def save_auto(self):
+        if self.audio is None or not self.segs:
+            self.message("저장할 구간이 없습니다.")
+            return
+        if not self._auto_enter() or self._auto_busy():
+            return
+        self._auto_flush()
+        if self.src_dirty:  # 선택 구간 인식 결과나 수정 중인 글이 원본 전체 결과로 저장되지 않게
+            self.message("② 원본 음성인식 결과를 먼저 [저장]하세요.", error=True)
+            return
+        folders, base = self._auto_key
+        full = paths.read_text(paths.full_stt_path(folders, base))
+        if full is None:
+            self.message("원본 음성인식 Text가 없습니다. ② [음성인식 실행]을 먼저 하세요.", error=True)
+            return
+        chosen = [s for s in self.segs if s.selected]
+        empty = next((i for i, s in enumerate(self.segs) if s.selected and not s.text.strip()), None)
+        if empty is not None:
+            self.seg_table.select_row(empty)
+            self.message(f"구간 {self.segs[empty].n}의 문장이 비어 있습니다. 문장을 입력하거나 저장 선택을 해제하세요.", error=True)
+            return
+        if any(s.audio is None for s in chosen):  # 소리 준비가 실패했거나 멈춘 경우
+            self._auto_render_missing()
+            self.message("구간 소리를 준비하는 중입니다. 잠시 후 다시 누르세요.")
+            return
+        have = paths.study_numbers(folders, base)
+        drop = sorted(s.n for s in self.segs if not s.selected and s.n in have)
+        if not chosen and not drop:
+            self.message("저장할 구간을 선택하세요.")
+            return
+        if drop:
+            names = "\n".join(paths.study_wav_path(folders, base, n).name for n in drop[:10])
+            more = f"\n… 외 {len(drop) - 10}쌍" if len(drop) > 10 else ""
+            last = "" if chosen or (have - set(drop)) else " 남는 쌍이 없으므로 원본 인식 Text도 삭제합니다."
+            if not self._ask_no_default("저장 해제한 쌍 삭제", f"저장 선택을 해제한 {len(drop)}쌍의 Wav와 Text를 학습용 폴더에서 삭제합니다."
+                                        f"{last} 되돌릴 수 없습니다.\n\n{names}{more}"):
+                self.message("저장을 취소했습니다.")
+                return
+        rate, sampwidth = self.audio.rate, self.audio.info.sampwidth
+        items = [(s.n, s.audio, " ".join(s.text.split())) for s in chosen]  # 저장 중 수정해도 이 값으로 저장한다
+
+        def job():
+            errors = []
+            for n in drop:
+                try:
+                    paths.study_remove(folders, base, n)
+                except OSError as e:
+                    errors.append(f"{n}번 삭제: {e}")
+            for n, audio, text in items:
+                try:
+                    wav = paths.study_wav_path(folders, base, n)
+                    if not wav.exists():  # 소리는 구간마다 정해져 있어 이미 있으면 다시 쓰지 않는다
+                        wavio.write(wav, audio, rate, sampwidth)
+                    paths.write_text(paths.study_txt_path(folders, base, n), text)
+                except OSError as e:
+                    errors.append(f"{n}번: {e}")
+            if paths.study_numbers(folders, base):
+                paths.write_text(paths.study_full_path(folders, base), full)
+            else:
+                paths.study_full_path(folders, base).unlink(missing_ok=True)
+            return {"count": len(items), "errors": errors}
+
+        self.player.stop()
+        self._auto_saving = True
+        self._auto_refresh()
+        self.message("학습용 파일 저장 중…")
+        w = TaskWorker(job, self)
+        w.tag = {"key": self._auto_key}
+        w.result.connect(self._on_auto_saved)
+        self._workers.add(w)
+        w.start()
+
+    def _on_auto_saved(self, w, r, err):
+        self._workers.discard(w)
+        w.wait(2000)
+        w.deleteLater()
+        self._auto_saving = False
+        if w.tag["key"] == self._auto_key:  # 저장 중 다른 파일을 다녀와도 상태를 맞춘다
+            self._auto_mark_saved()
+            self.seg_table.refresh_states()
+        self._auto_write_record()
+        self._auto_refresh()
+        if r is None:
+            self.message(f"학습용 저장 실패: {err}", error=True)
+        elif r["errors"]:
+            self.message(f"학습용 저장 중 {len(r['errors'])}건 실패: {r['errors'][0]}", error=True)
+        else:
+            done = f"학습용 {r['count']}쌍과 원본 인식 Text를 저장했습니다" if r["count"] else "해제한 쌍을 삭제했습니다"
+            self.message(f"{done} · {self.folders.study_dir('wav').parent}")
+
     # ================= 상태 =================
     def _dir_note(self, key):
         try:
@@ -1525,7 +2025,8 @@ class MainWindow(QMainWindow):
             self.lbl_txt_path.setText(f"분할 음성인식 Text: {self._dir_note('part_txt')}")
 
     def _update_controls(self):
-        ok = self.audio is not None and bool(self.wave.sel) and segment.selection_ok(*self.wave.sel) and not self._creating
+        ok = (self.audio is not None and bool(self.wave.sel) and segment.selection_ok(*self.wave.sel)
+              and not self._creating and not self.auto_mode)
         self.btn_create.setEnabled(ok)
         self.act_create.setEnabled(ok)
         over = self.wave.sel and (self.wave.sel[1] - self.wave.sel[0]) > segment.MAX_SEG_S
@@ -1556,6 +2057,7 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.player.stop()
+        self._auto_flush()
         self.hide()  # 남은 작업을 기다리는 동안 창은 바로 닫힌 것처럼 보이게
         for w in list(self._workers):
             w.cancel()

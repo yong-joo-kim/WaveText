@@ -21,6 +21,8 @@ WAVE = {
     "zero": QColor(C["gray-40"]), "label": QColor(C["gray-60"]), "wave": QColor(C["primary-50"]),
     "sel": QColor(37, 110, 244, 26), "mark": QColor(C["warning-30"]), "play": QColor(C["gray-90"]),
     "overview_bg": QColor(C["gray-5"]), "view_box": QColor(C["primary-50"]),
+    "band_on": QColor(38, 115, 55, 30), "band_off": QColor(109, 120, 130, 26), "band_short": QColor(255, 177, 20, 44),
+    "band_cur": QColor(C["primary-60"]), "band_label": QColor(C["gray-70"]),
 }
 
 FONT_FAMILIES = ["Pretendard GOV", "Pretendard", "Malgun Gothic"]
@@ -127,6 +129,7 @@ QListWidget::item:hover {{ background: {c['primary-5']}; }}
 
 QDialog {{ background: {c['gray-0']}; }}
 QTableWidget {{ border: 0; gridline-color: {c['gray-10']}; font-size: 15px; }}
+QTableWidget::item:selected {{ background: {c['primary-10']}; color: {c['gray-90']}; }}
 QHeaderView::section {{ background: {c['secondary-5']}; border: 0; border-bottom: 1px solid {c['gray-20']}; padding: 6px; font-weight: 700; }}
 QToolTip {{ background: {c['gray-90']}; color: #ffffff; border: 0; padding: 6px 8px; font-size: 13px; }}
 """

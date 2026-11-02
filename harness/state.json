@@ -10,8 +10,8 @@
     "P6": "done",
     "P7": "pending-approval"
   },
-  "loop": 2,
-  "note": "v0.1.6: 공개 저장소용 정리(사내 IP 기본값 제거, 참고 화면 제외, 다른 제품 이름 제거), 새 GitHub 저장소에 커밋 1개짜리 기록으로 배포. 이전 기록은 로컬 backup/full-history 브랜치.",
+  "loop": 1,
+  "note": "자동분리생성 추가: 2026-11-02 대화창 계획 승인을 P1·P2 승인으로 기록. P4 1차 되돌림 1회, 2차 치명·주요 0건. FR-23·FR-27 변경은 사용자 확인 대기. 브랜치 feature/auto-split, 미배포.",
   "artifacts": [
     "docs/01_pm/개발계획서.md",
     "docs/02_requirements/requirements.md",

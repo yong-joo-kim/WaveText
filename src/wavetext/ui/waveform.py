@@ -75,6 +75,8 @@ class WaveformView(QWidget):
         self.vzoom = 1.0
         self.sel = None
         self.playhead = None
+        self.bands = []         # 자동 분리 구간 [(시작, 끝, 표시 글자, 색 이름)]
+        self.cur_band = None
         self._drag = None
         self._font = QFont(mono_family)
         self._font.setPixelSize(12)
@@ -91,8 +93,28 @@ class WaveformView(QWidget):
         self.vzoom = 1.0
         self.sel = None
         self.playhead = None
+        self.bands = []
+        self.cur_band = None
         self.update()
         self.viewChanged.emit(*self.view)
+
+    def set_bands(self, bands, cur=None):
+        self.bands = bands
+        self.cur_band = cur
+        self.update()
+
+    def set_cur_band(self, i):
+        self.cur_band = i
+        self.update()
+
+    def reveal(self, t0, t1):
+        """구간이 보기 범위 밖이면 가운데로 옮긴다. 확대 배율은 구간이 들어갈 만큼만 바꾼다."""
+        a, b = self.view
+        if a <= t0 and t1 <= b:
+            return
+        span = max(b - a, (t1 - t0) * 1.2)
+        c = (t0 + t1) / 2
+        self.set_view(c - span / 2, c + span / 2)
 
     def set_selection(self, sel, emit=True):
         if sel is not None:
@@ -174,6 +196,10 @@ class WaveformView(QWidget):
             x = self.x_of(t)
             p.drawLine(QPointF(x, 0), QPointF(x, r.bottom()))
             t += tstep
+        # 자동 분리 구간 띠
+        for t0, t1, _, kind in self.bands:
+            if t1 >= a and t0 <= b:
+                p.fillRect(QRectF(self.x_of(t0), 0, self.x_of(t1) - self.x_of(t0), r.height()), WAVE[kind])
         # 선택 구간
         if self.sel:
             x0, x1 = self.x_of(self.sel[0]), self.x_of(self.sel[1])
@@ -190,6 +216,17 @@ class WaveformView(QWidget):
                 y1 = mid - np.maximum(-1.0, lo[idx] * self.vzoom) * amp + 1
                 xs = r.left() + idx + 0.5
                 p.drawLines([QLineF(x, a0, x, a1) for x, a0, a1 in zip(xs.tolist(), y0.tolist(), y1.tolist())])
+        # 구간 번호·기호는 띠 아래쪽에 쓴다 (위쪽은 "시작"/"끝" 탭, 색만으로 구분하지 않음)
+        for i, (t0, t1, label, _) in enumerate(self.bands):
+            if t1 < a or t0 > b:
+                continue
+            band = QRectF(self.x_of(t0), r.bottom() - 18, self.x_of(t1) - self.x_of(t0), 18)
+            if band.width() >= 20:
+                p.setPen(WAVE["band_label"])
+                p.drawText(band.adjusted(4, 0, 0, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, label)
+            if i == self.cur_band:
+                p.setPen(QPen(WAVE["band_cur"], 2))
+                p.drawRect(QRectF(band.left(), 1, band.width(), r.height() - 2))
         # 마크 경계 + "시작"/"끝" 글자 탭 (색만으로 구분하지 않음)
         if self.sel and self.selectable:
             p.setFont(self._mark_font)
