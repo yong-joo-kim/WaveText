@@ -1,9 +1,10 @@
 """Claude Code 대화 기록(JSONL)을 한글이 깨지지 않는 단일 HTML 파일로 내보낸다.
 
-사용: .venv/Scripts/python tools/export_chat.py <세션.jsonl> <출력.html> [--mask 비밀값 ...]
+사용: .venv/Scripts/python tools/export_chat.py <세션.jsonl> [세션2.jsonl ...] <출력.html> [제목] [--mask 비밀값 ...]
 - 사용자 메시지와 Claude 답변만 담는다(도구 호출·결과는 '작업 n건'으로 요약).
+- 세션을 여러 개 주면 시작 시각 순으로 이어 붙이고, 날짜가 바뀌는 곳에 구분선을 넣는다.
 - 외부 파일·인터넷 없이 열리는 UTF-8 HTML 한 개로 저장한다.
-- --mask 로 준 문자열(API 키 등)은 ******** 로 가린다.
+- --mask 로 준 문자열과 config.local.json의 서버 주소·API 키는 ******** 로 가린다.
 """
 import html
 import json
@@ -140,6 +141,8 @@ def load(path):
         t = o.get("type")
         if t == "attachment" and isinstance(o.get("attachment"), dict) and o["attachment"].get("type") == "queued_command":
             add("user", ts, ("작업 중 보낸 메시지", o["attachment"].get("prompt", "")))
+        elif t == "user" and o.get("isCompactSummary"):
+            add("note", ts, "대화가 길어 앞부분을 요약하고 이어서 진행함")
         elif t == "user" and not o.get("isMeta"):
             c = o["message"]["content"]
             if isinstance(c, list):
@@ -166,11 +169,16 @@ def load(path):
     return [t for t in turns if t[2] or t[3]]
 
 
-def when(ts):
+def when(ts, fmt="%H:%M"):
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST).strftime("%H:%M")
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(KST).strftime(fmt)
     except ValueError:
         return ""
+
+
+def day(ts):
+    d = when(ts, "%Y-%m-%d")
+    return f"{d[:4]}년 {int(d[5:7])}월 {int(d[8:])}일" if d else ""
 
 
 CSS = """
@@ -185,6 +193,8 @@ main{max-width:980px;margin:0 auto;padding:20px 16px 60px;display:flex;flex-dire
 .user{align-items:flex-end}.user .b{background:var(--me);border-color:var(--me-line);max-width:88%}
 .agent .b{background:var(--agent);border-color:var(--agent-line)}
 .note{align-items:center;color:var(--sub);font-size:13px}
+.day{flex-direction:row;align-items:center;gap:12px;margin-top:18px;color:var(--accent);font-weight:700;font-size:14px}
+.day::before,.day::after{content:"";flex:1;border-top:1px solid var(--line)}
 .b p{margin:.4em 0}.b h3,.b h4,.b h5{margin:.9em 0 .3em}.b ul,.b ol{margin:.3em 0;padding-left:1.4em}
 li.l1{margin-left:1.2em}li.l2{margin-left:2.4em}li.l3{margin-left:3.6em}
 code{background:var(--code);border-radius:4px;padding:1px 5px;font:13px Consolas,"D2Coding",monospace}
@@ -197,10 +207,29 @@ blockquote{margin:.5em 0;padding:4px 12px;border-left:3px solid var(--accent);co
 """
 
 
+def period(turns):
+    days = [day(t[1]) for t in turns if day(t[1])]
+    if not days:
+        return ""
+    return f"{days[0]} · " if days[0] == days[-1] else f"{days[0]} ~ {days[-1]} · "
+
+
+def config_secrets():
+    """이 PC의 config.local.json에 있는 서버 주소와 API 키(대화에 나왔을 수 있어 가린다)."""
+    try:
+        stt = json.loads((Path(__file__).resolve().parent.parent / "config.local.json").read_text(encoding="utf-8")).get("stt") or {}
+        return [str(v) for v in (stt.get("api_key"), (stt.get("server") or {}).get("host")) if v and len(str(v)) >= 6]
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
 def render(turns, title, masks):
-    rows = []
+    rows, last_day = [], None
     for role, ts, bodies, ntool in turns:
         tm = when(ts)
+        if day(ts) and day(ts) != last_day:
+            last_day = day(ts)
+            rows.append(f"<div class='t day'>{last_day}</div>")
         if role == "note":
             rows.append(f"<div class='t note'>— {html.escape(bodies[0])} ({tm}) —</div>")
             continue
@@ -220,7 +249,7 @@ def render(turns, title, masks):
             rows.append(f"<div class='t claude'><div class='who'>Claude · {tm}</div><div class='b'>{body}{tools}</div></div>")
     doc = (f"<!doctype html><html lang='ko'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
            f"<title>{html.escape(title)}</title><style>{CSS}</style></head><body><header><h1>{html.escape(title)}</h1>"
-           f"<p>메시지 {sum(1 for t in turns if t[0] == 'user')}개 · 답변 {sum(1 for t in turns if t[0] == 'claude')}개 · "
+           f"<p>{period(turns)}메시지 {sum(1 for t in turns if t[0] == 'user')}개 · 답변 {sum(1 for t in turns if t[0] == 'claude')}개 · "
            f"작업 기록(도구 실행 내용)은 건수로만 표시</p></header><main>{''.join(rows)}</main></body></html>")
     for m in masks:
         if m:
@@ -234,11 +263,13 @@ def main():
     if "--mask" in args:
         k = args.index("--mask")
         masks, args = args[k + 1:], args[:k]
-    src, dst = Path(args[0]), Path(args[1])
-    title = args[2] if len(args) > 2 else "WaveText 개발 대화 기록"
-    turns = load(src)
+    srcs = [Path(a) for a in args if a.lower().endswith(".jsonl")]
+    dst = next(Path(a) for a in args if a.lower().endswith(".html"))
+    title = next((a for a in args if not a.lower().endswith((".jsonl", ".html"))), "WaveText 개발 대화 기록")
+    sessions = sorted((load(s) for s in srcs), key=lambda ts: ts[0][1] if ts else "")
+    turns = [t for s in sessions for t in s]
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text(render(turns, title, masks), encoding="utf-8")
+    dst.write_text(render(turns, title, masks + config_secrets()), encoding="utf-8")
     print(f"저장: {dst} ({dst.stat().st_size / 1024:.0f} KB, 대화 {len(turns)}개)")
 
 
