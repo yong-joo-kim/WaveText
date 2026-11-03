@@ -851,6 +851,8 @@ class MainWindow(QMainWindow):
         readable = [i for i, p in enumerate(self.sources) if isinstance(self.infos.get(p), wavio.WavInfo)]
         first = next((i for i in readable if not self.counts.get(self.sources[i].stem.lower())), readable[0] if readable else 0)
         self.load_index(first, ask=False)
+        if paths.folder_conflict(folders):  # 설정 파일로 겹친 폴더를 열면 바로 알린다 (V3R-2)
+            self.message(paths.folder_conflict_message(folders) + " 자동분할생성은 [저장 폴더]에서 바꾼 뒤 쓸 수 있습니다.", error=True)
 
     def _fill_list(self):
         self.file_list.clear()
@@ -1717,8 +1719,7 @@ class MainWindow(QMainWindow):
             if words and rng is not None:
                 if rng[0] - 0.001 <= min(t0, t1) and max(t0, t1) <= rng[1] + 0.001:
                     return client.words_in(words, t0, t1, offset), None
-                return "", (f"② 선택 구간 인식 범위({rng[0]:.3f}~{rng[1]:.3f}초)를 벗어나 단어 시간이 없어 문장을 가져오지 못했습니다. "
-                            "원본 전체를 인식하거나 그 범위 안에서 만드세요")
+                return "", f"② 선택 구간 인식 범위({rng[0]:.3f}~{rng[1]:.3f}초) 밖이라 단어 시간이 없어 문장을 가져오지 못했습니다"
         return "", "원본 음성인식 결과(단어 시간)가 없어 문장을 가져오지 못했습니다"
 
     def copy_part_from_src(self):
@@ -1735,7 +1736,7 @@ class MainWindow(QMainWindow):
             return
         text, why = self._span_text(p.t0, p.t1)
         if why:
-            self.message(f"{why}. ② 원본 음성인식을 먼저 실행하세요.", error=True)
+            self.message(f"{why}. ② 원본 음성인식을 먼저 실행한 뒤 다시 누르세요.", error=True)  # V3R-1
             return
         if not text:
             self.message(f"원본 {p.t0:.3f}~{p.t1:.3f}초 구간에 인식된 문장이 없습니다.", error=True)
@@ -2101,6 +2102,12 @@ class MainWindow(QMainWindow):
 
     def _auto_after_stt(self, base):
         """인식이 끝나면 구간을 나눈다. 이전 구간이나 저장본이 있으면 입력 중에 확인 창이 뜨지 않게 사용자가 직접 실행한다."""
+        if paths.folder_conflict(self.folders):  # 겹친 폴더에서는 사용자 쌍을 저장본으로 잘못 세므로 나누지 않는다 (V3R-2)
+            self._auto_refresh()
+            if self.auto_mode:
+                self.message(paths.folder_conflict_message(self.folders) + " [저장 폴더]에서 바꾼 뒤 [자동 분할 실행]을 누르세요.",
+                             error=True)
+            return
         if not self.segs and not paths.auto_numbers(self.folders, base):
             if self.auto_mode:
                 self.run_auto_split()

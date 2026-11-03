@@ -744,3 +744,17 @@ def test_save_message_shows_saved_folder(auto, qtbot):
     auto.folders = replace(auto.folders, auto_wav=str(Path(auto.folders.src) / "다른"))
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
     assert str(saved_dir) in auto.auto_msg.text()
+
+
+def test_clashing_folders_warn_on_open_and_after_stt(auto, qtbot):
+    """V3R-2: 겹친 폴더로 열면 바로 알리고, 인식 뒤에도 '이전 구간은 그대로' 대신 겹침을 안내한다."""
+    from dataclasses import replace
+    x = Path(auto.folders.src) / "X"
+    f = replace(auto.folders, wav=str(x), auto_wav=str(x))
+    auto.auto_dlg.reject()
+    auto.open_folders(f)
+    assert "폴더가 같습니다" in auto.st_msg.text()
+    auto.act_auto.trigger()
+    src_stt(auto, qtbot)
+    assert not auto.segs and auto._auto_worker is None
+    assert "폴더가 같습니다" in auto.auto_msg.text() and "이전 구간은 그대로" not in auto.auto_msg.text()

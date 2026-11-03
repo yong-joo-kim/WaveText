@@ -130,3 +130,9 @@ def test_folders_from_dict_ignores_unknown_keys():
     f = Folders.from_dict({"src": "D:/a", "wav": 3, "bogus": "x", "auto_txt": "D:/t"})
     assert (f.src, f.wav, f.auto_txt) == ("D:/a", "", "D:/t")
     assert Folders.from_dict(None) == Folders()
+
+
+def test_folders_from_dict_non_dict_uses_defaults():
+    """V3R-3: folders 값이 사전이 아니어도 기본값으로 시작한다."""
+    for bad in ("D:/a", ["x"], 3, True):
+        assert Folders.from_dict(bad) == Folders()

@@ -62,7 +62,8 @@ class Folders:
     def from_dict(cls, d):
         """설정 파일의 folders 값으로 만든다. 모르는 키나 문자열이 아닌 값은 무시한다(다른 버전 설정으로도 시작, V3-3)."""
         names = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in (d or {}).items() if k in names and isinstance(v, str)})
+        d = d if isinstance(d, dict) else {}  # 사전이 아니면 기본값으로 시작한다 (V3R-3)
+        return cls(**{k: v for k, v in d.items() if k in names and isinstance(v, str)})
 
 
 FOLDER_LABELS = {"full": "원본 음성인식 Text", "wav": "사용자 분할 음성 Wav", "part_txt": "사용자 분할 음성인식 Text",
