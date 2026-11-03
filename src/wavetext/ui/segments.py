@@ -81,9 +81,18 @@ class SegmentTable(QTableWidget):
         for col, w in WIDTHS.items():
             self.setColumnWidth(col, w)
         head.setSectionResizeMode(COL_TEXT, QHeaderView.ResizeMode.Stretch)
+        # 긴 문장은 "…"로 줄이지 않고 아래 줄로 이어 보여 준다. 창을 넓히면 문장 칸이 넓어진 만큼 옆으로 더 보인다.
+        self.setWordWrap(True)
+        self.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        head.sectionResized.connect(self._fit_rows)
         self.itemChanged.connect(self._item_changed)
         self.currentCellChanged.connect(self._cell_changed)
         self.cellClicked.connect(self._cell_clicked)
+
+    def _fit_rows(self, col, _old, _new):
+        if col == COL_TEXT:  # 문장 칸 폭이 바뀌면 줄 수가 달라지므로 행 높이를 다시 맞춘다
+            self.resizeRowsToContents()
 
     def set_segs(self, segs):
         self.blockSignals(True)

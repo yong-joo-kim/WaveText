@@ -758,3 +758,20 @@ def test_clashing_folders_warn_on_open_and_after_stt(auto, qtbot):
     src_stt(auto, qtbot)
     assert not auto.segs and auto._auto_worker is None
     assert "폴더가 같습니다" in auto.auto_msg.text() and "이전 구간은 그대로" not in auto.auto_msg.text()
+
+
+def test_long_text_wraps_and_follows_width(auto, qtbot):
+    """긴 문장은 '…'로 줄이지 않고 아래 줄로 보이고, 표를 넓히면 줄 수가 줄어 행이 낮아진다."""
+    split_done(auto, qtbot)
+    t = auto.seg_table
+    assert t.wordWrap() and t.textElideMode() == Qt.TextElideMode.ElideNone
+    auto.segs[0].text = " ".join(["아주 긴 문장입니다"] * 20)
+    t.update_row(0)
+    auto.auto_dlg.resize(1100, 800)
+    QApplication.processEvents()
+    t.resizeRowsToContents()
+    narrow = t.rowHeight(0)
+    assert narrow > t.rowHeight(1)                          # 여러 줄
+    auto.auto_dlg.resize(1900, 800)
+    QApplication.processEvents()
+    assert t.rowHeight(0) < narrow                          # 넓히면 옆으로 더 보여 줄 수가 줄어든다
