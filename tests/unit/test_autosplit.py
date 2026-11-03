@@ -152,3 +152,25 @@ def test_zero_length_group_is_merged():
     segs = autosplit.split(words, 20.0)
     assert all(s.t1 - s.t0 >= 0.05 for s in segs)
     assert " ".join(s.text for s in segs) == "가 나"
+
+
+def test_zero_length_tail_after_long_silence_is_not_absorbed():
+    """MR-1: 긴 묵음 뒤 파일 끝 0길이 단어는 앞 구간에 붙이지 않아 앞 구간이 '김'으로 바뀌지 않는다."""
+    import numpy as np
+    rate, total = 8000, 20.0
+    rng = np.random.default_rng(0)
+    mono = np.zeros(int(rate * total), np.float32)
+    mono[int(0.3 * rate):int(14.75 * rate)] = rng.normal(0, 0.3, int(14.45 * rate))
+    tail = mono[int(14.75 * rate):]
+    tail[:] = rng.normal(0, 1, len(tail)) * np.linspace(0.01, 0.0, len(tail))   # 끝으로 갈수록 조용해짐
+    words = [W("가", 0.3, 14.75), W("나", 25.0, 25.0)]            # 나: 파일 끝(20초)에 붙은 0길이 단어
+    segs = autosplit.split(words, total, mono, rate)
+    first = segs[0]
+    assert first.t1 < 15.5 and first.flag == "" and first.selected
+
+
+def test_overlap_cut_only_when_unsavable():
+    """MR-2: 겹친 곳밖에 자를 데가 없어도 30초를 넘으면 마지막 수단으로 나눈다(30초 이하면 그대로 둔다)."""
+    inner = [W(f"말{i}", 1.0 + i * 1.3, 1.0 + i * 1.3 + 0.8) for i in range(30)]
+    segs = autosplit.split([W("긴", 0.0, 40.0)] + inner, 45.0)
+    assert len(segs) > 1 and all(s.t1 - s.t0 <= 30.0 + 1e-6 for s in segs)

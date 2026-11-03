@@ -284,7 +284,7 @@ def test_sending_stops_when_server_reports_error():
     c = cfg()
     c["realtime_pacing"] = True
     ws = StuckWS([{"status": 401, "message": "bad key"}], first_now=True)
-    pcm = b"\x00\x00" * 16000 * 3                       # 3초 음성
+    pcm = b"\x00\x00" * 16000 * 3                       # 6초 음성 (8kHz·16비트는 1초에 16000바이트)
     t = time.perf_counter()
     with pytest.raises(client.SttError) as e:
         client.transcribe(pcm, c, "m", "t", connect=lambda *a, **k: ws)

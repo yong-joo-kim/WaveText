@@ -120,11 +120,17 @@ def split(words, total, mono=None, rate=0):
         out, stack = [], [(a, b)]
         while stack:
             a, b = stack.pop()
-            # 단어 시각이 겹친 곳에서 자르면 단어가 잘리므로 후보에서 뺀다. 그곳밖에 없으면 나누지 않는다 (AS-11)
-            ok = [i for i in range(a, b) if bounds[i][1] >= 0]
-            if length(a, b) <= MAX_S or not ok:
+            if length(a, b) <= MAX_S or a == b:
                 out.append((a, b))
                 continue
+            # 단어 시각이 겹친 곳에서 자르면 단어가 잘리므로 후보에서 뺀다 (AS-11).
+            # 그곳밖에 없으면 나누지 않되, 30초를 넘어 아예 저장할 수 없게 되면 마지막 수단으로 자른다 (MR-2).
+            ok = [i for i in range(a, b) if bounds[i][1] >= 0]
+            if not ok:
+                if length(a, b) <= segment.MAX_SEG_S:
+                    out.append((a, b))
+                    continue
+                ok = list(range(a, b))
             cands = [i for i in ok if length(a, i) >= MIN_S and length(i + 1, b) >= MIN_S] or ok
             mid = (edge0(a) + edge1(b)) / 2
             i = max(cands, key=lambda i: (bounds[i][2] and bounds[i][3], bounds[i][3], bounds[i][1], -abs(bounds[i][4] - mid)))
@@ -157,9 +163,19 @@ def split(words, total, mono=None, rate=0):
         left, right = sorted(pick)
         groups[left:right + 1] = [(groups[left][0], groups[right][1])]
 
-    merged = []  # 길이가 거의 없는 묶음(파일 끝에 붙은 0길이 단어 등)은 이웃 묶음에 붙인다 (AS-11)
+    def absorb(p, g):
+        """길이가 거의 없는 묶음을 이웃에 붙일지 (AS-11). 긴 묵음 경계는 넘지 않고, 붙여서 15초를 넘게 되면
+        원래 긴 묶음이 사실상 그대로일 때만 붙인다 — 멀쩡한 구간이 '김'으로 바뀌어 선택에서 빠지지 않게 (MR-1)."""
+        if length(*g) >= segment.MIN_SEG_S and length(*p) >= segment.MIN_SEG_S:
+            return False
+        if bounds[p[1]][0] >= GRADE_HARD:
+            return False
+        joined = length(p[0], g[1])
+        return joined <= MAX_S or joined <= max(length(*p), length(*g)) + segment.MIN_SEG_S
+
+    merged = []
     for g in groups:
-        if merged and (length(*g) < segment.MIN_SEG_S or length(*merged[-1]) < segment.MIN_SEG_S):
+        if merged and absorb(merged[-1], g):
             merged[-1] = (merged[-1][0], g[1])
         else:
             merged.append(g)
