@@ -120,10 +120,12 @@ def split(words, total, mono=None, rate=0):
         out, stack = [], [(a, b)]
         while stack:
             a, b = stack.pop()
-            if length(a, b) <= MAX_S or a == b:
+            # 단어 시각이 겹친 곳에서 자르면 단어가 잘리므로 후보에서 뺀다. 그곳밖에 없으면 나누지 않는다 (AS-11)
+            ok = [i for i in range(a, b) if bounds[i][1] >= 0]
+            if length(a, b) <= MAX_S or not ok:
                 out.append((a, b))
                 continue
-            cands = [i for i in range(a, b) if length(a, i) >= MIN_S and length(i + 1, b) >= MIN_S] or list(range(a, b))
+            cands = [i for i in ok if length(a, i) >= MIN_S and length(i + 1, b) >= MIN_S] or ok
             mid = (edge0(a) + edge1(b)) / 2
             i = max(cands, key=lambda i: (bounds[i][2] and bounds[i][3], bounds[i][3], bounds[i][1], -abs(bounds[i][4] - mid)))
             stack += [(i + 1, b), (a, i)]
@@ -155,8 +157,14 @@ def split(words, total, mono=None, rate=0):
         left, right = sorted(pick)
         groups[left:right + 1] = [(groups[left][0], groups[right][1])]
 
+    merged = []  # 길이가 거의 없는 묶음(파일 끝에 붙은 0길이 단어 등)은 이웃 묶음에 붙인다 (AS-11)
+    for g in groups:
+        if merged and (length(*g) < segment.MIN_SEG_S or length(*merged[-1]) < segment.MIN_SEG_S):
+            merged[-1] = (merged[-1][0], g[1])
+        else:
+            merged.append(g)
     segs = []
-    for a, b in groups:
+    for a, b in merged:
         t0, t1 = edge0(a), edge1(b)
         flag = length_flag(t1 - t0)
         segs.append(Seg(t0, t1, " ".join(w["word"] for w in ws[a:b + 1]), flag, selected=not flag))

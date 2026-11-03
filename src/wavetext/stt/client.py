@@ -127,6 +127,21 @@ def _scrub(text, key):
     return text.replace(key, "***") if key else text
 
 
+ERROR_STATUS = (400, 401, 404, 500)
+
+
+def _close(ws, graceful):
+    """정상 종료면 닫기 인사를 하고 닫는다. 비정상(중지·무응답·오류)이면 수신 중인 스레드를 기다리지 않도록
+    소켓을 바로 끊는다 — close()는 수신 스레드가 쥔 잠금 때문에 다음 수신 시간제한까지 막힐 수 있다 (PX-5)."""
+    try:
+        if not graceful and hasattr(ws, "shutdown"):
+            ws.shutdown()
+        else:
+            ws.close(timeout=1)
+    except Exception:
+        pass
+
+
 def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None):
     """PCM(8kHz·16비트·모노) 1건을 인식. dict(transcript, messages) 반환.
 
@@ -148,7 +163,7 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
         raise SttError(_scrub(f"연결 실패: {type(e).__name__}: {e}", key))
 
     msgs = []
-    st = {"err": None, "done": False, "finished": False}
+    st = {"err": None, "done": False, "finished": False, "failed": False}
 
     def reader():
         try:
@@ -169,6 +184,9 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
                 if isinstance(obj, dict) and obj.get("cmd") == "finished":
                     st["finished"] = True
                     break
+                if isinstance(obj, dict) and obj.get("status") in ERROR_STATUS:  # 오류 status면 더 기다리지 않는다 (PX-5)
+                    st["failed"] = True
+                    break
         except Exception as e:
             if not st["done"]:
                 st["err"] = e
@@ -184,13 +202,16 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
         for pos in range(0, len(pcm), chunk):
             if stop is not None and stop.is_set():
                 raise SttError("사용자 중지", retry=False)
+            if st["done"]:  # 서버가 오류를 보냈거나 연결을 끊었으면 남은 음성을 보내지 않는다 (PX-8)
+                break
             data = pcm[pos:pos + chunk]
             ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
             if on_progress:
                 on_progress(min(1.0, (pos + len(data)) / total))
             if cfg.get("realtime_pacing", False):
                 time.sleep(len(data) / BYTES_PER_SEC)
-        ws.send(json.dumps({"cmd": "finalize"}))
+        if not st["done"]:
+            ws.send(json.dumps({"cmd": "finalize"}))
         t_end = time.perf_counter()
         # 페이싱을 끄면 전송이 먼저 끝나고 서버는 음성을 차례로 처리한다. 긴 발화나 묵음은 끝나야 응답이 오므로 음성 길이만큼 더 기다린다
         wait_s = timeout if cfg.get("realtime_pacing", False) else timeout + len(pcm) / BYTES_PER_SEC
@@ -208,13 +229,10 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
         raise SttError(_scrub(f"전송 실패: {e}", key))
     finally:
         st["done"] = True
-        try:
-            ws.close(timeout=1)
-        except Exception:
-            pass
+        _close(ws, graceful=st["finished"])
     objs = [m for _, m in msgs]
     for m in objs:
-        if isinstance(m, dict) and m.get("status") in (400, 401, 404, 500):
+        if isinstance(m, dict) and m.get("status") in ERROR_STATUS:
             raise SttError(f"서버 오류 {m.get('status')}", retry=m.get("status") == 500)
     if not objs:
         raise SttError("응답 없음" + (f" ({_scrub(str(st['err']), key)})" if st["err"] else ""))

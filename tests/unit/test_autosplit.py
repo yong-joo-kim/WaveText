@@ -136,3 +136,19 @@ def test_many_unsplittable_words_do_not_overflow_stack():
 
 def test_punctuated_word_is_sentence_end():
     assert autosplit.is_sentence_end("필요.")
+
+
+def test_contained_word_is_not_cut():
+    """AS-11 잔여: 한 단어가 다른 단어를 포함하면 겹친 곳에서 자르지 않는다(단어를 자르느니 긴 구간으로 둔다)."""
+    words = [W("가", 1.0, 25.0), W("나", 18.0, 18.0)]
+    segs = autosplit.split(words, 30.0)
+    assert len(segs) == 1 and segs[0].t0 <= 1.0 and segs[0].t1 >= 25.0 and segs[0].flag == "long"
+    covers_all(segs, words)
+
+
+def test_zero_length_group_is_merged():
+    """AS-11 잔여: 파일 끝에 붙은 0길이 단어가 0길이 구간으로 남지 않는다."""
+    words = [W("가", 0.0, 20.0), W("나", 25.0, 25.0)]    # 파일(20초) 밖 단어 → 20~20초로 잘림
+    segs = autosplit.split(words, 20.0)
+    assert all(s.t1 - s.t0 >= 0.05 for s in segs)
+    assert " ".join(s.text for s in segs) == "가 나"

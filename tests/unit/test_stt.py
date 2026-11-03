@@ -229,3 +229,64 @@ def test_wait_ends_when_server_stays_silent():
     with pytest.raises(client.SttError):
         client.transcribe(b"\x00\x00" * 160, c, "m", "t", connect=lambda *a, **k: ws)
     assert time.perf_counter() - t < 4
+
+
+class StuckWS(FakeWS):
+    """수신이 잠금을 쥔 채 막히는 소켓: close()는 수신이 풀릴 때까지(3초) 막히고, shutdown()은 바로 끊는다."""
+
+    def __init__(self, replies=(), first_now=False):
+        super().__init__(replies)
+        self.released = threading.Event()
+        self.first_now = first_now
+        self.shut = False
+
+    def recv(self):
+        deadline = time.perf_counter() + 10
+        while time.perf_counter() < deadline:
+            if self.replies and (self.first_now or self.finalized.is_set()):  # first_now: 전송 시작 때 바로 온다
+                return json.dumps(self.replies.pop(0))
+            if self.released.wait(0.02):
+                raise OSError("socket closed")
+        return ""
+
+    def close(self, timeout=1):
+        self.released.wait(3)
+
+    def shutdown(self):
+        self.shut = True
+        self.released.set()
+
+
+def test_abnormal_end_does_not_wait_for_receive_lock():
+    """PX-5: 무응답으로 끝나면 close의 잠금 대기 없이 소켓을 바로 끊는다."""
+    c = cfg()
+    c["retry"]["timeout_s"] = 0.3
+    ws = StuckWS()
+    t = time.perf_counter()
+    with pytest.raises(client.SttError):
+        client.transcribe(b"\x00\x00" * 160, c, "m", "t", connect=lambda *a, **k: ws)
+    assert ws.shut and time.perf_counter() - t < 2
+
+
+def test_error_status_ends_wait_immediately():
+    """PX-5: 서버가 오류 status만 보내고 닫지 않아도 바로 오류로 끝난다."""
+    c = cfg()
+    c["retry"]["timeout_s"] = 5
+    ws = StuckWS([{"status": 500, "message": "busy"}])
+    t = time.perf_counter()
+    with pytest.raises(client.SttError) as e:
+        client.transcribe(b"\x00\x00" * 160, c, "m", "t", connect=lambda *a, **k: ws)
+    assert "500" in str(e.value) and time.perf_counter() - t < 2
+
+
+def test_sending_stops_when_server_reports_error():
+    """PX-8: 페이싱 켬에서 전송 중 오류 status가 오면 남은 음성을 보내지 않는다."""
+    c = cfg()
+    c["realtime_pacing"] = True
+    ws = StuckWS([{"status": 401, "message": "bad key"}], first_now=True)
+    pcm = b"\x00\x00" * 16000 * 3                       # 3초 음성
+    t = time.perf_counter()
+    with pytest.raises(client.SttError) as e:
+        client.transcribe(pcm, c, "m", "t", connect=lambda *a, **k: ws)
+    assert "401" in str(e.value) and time.perf_counter() - t < 1.5
+    assert sum(len(b) for b in ws.sent if isinstance(b, bytes)) < len(pcm) // 2

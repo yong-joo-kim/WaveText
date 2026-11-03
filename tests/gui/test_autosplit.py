@@ -847,3 +847,24 @@ def test_editor_shows_all_lines_and_stays_inside_table(auto, qtbot):
     QApplication.processEvents()
     assert ed.geometry().bottom() <= t.viewport().height()   # 표 아래로 넘치지 않는다
     assert ed.height() >= ed.fontMetrics().lineSpacing() * 3
+
+
+def test_cancel_before_delete_does_not_block(auto, qtbot, monkeypatch):
+    """PX-6: 다시 분할 초반(분리·잡음 추정)에 파일을 옮기면 기다리지 않고, 저장본도 지우지 않는다."""
+    from wavetext.audio import autosplit as asp
+    split_done(auto, qtbot)
+    auto.save_auto()
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    saved = paths.auto_numbers(auto.folders, "a_0001")
+    assert saved
+    real = asp.split
+    monkeypatch.setattr(asp, "split", lambda *a, **k: (time.sleep(2.0), real(*a, **k))[1])
+    answer(monkeypatch, QMessageBox.StandardButton.Yes)
+    auto.run_auto_split()
+    w = auto._auto_worker
+    assert w is not None
+    start = time.perf_counter()
+    auto._auto_cancel()
+    assert time.perf_counter() - start < 0.5                # 메인 화면을 막지 않는다
+    w.wait(5000)
+    assert paths.auto_numbers(auto.folders, "a_0001") == saved

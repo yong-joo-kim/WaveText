@@ -1951,10 +1951,11 @@ class MainWindow(QMainWindow):
     def _auto_cancel(self):
         w = self._auto_worker
         if w is not None:
-            w.cancel()
+            deleting = w.cancel()
             self._auto_worker = None  # 늦게 온 결과는 _on_auto_done에서 버린다
-            if w.tag["new"]:  # 저장본 삭제와 기록이 끝난 뒤 넘어가야 돌아왔을 때 파일과 기록이 맞는다
+            if deleting:  # 저장본 삭제를 시작했으면 삭제와 기록이 끝난 뒤 넘어가야 돌아왔을 때 파일과 기록이 맞는다
                 w.wait(30000)
+            if w.tag["new"]:  # 그 전 단계(분리·잡음 추정)는 기다리지 않는다: 멈춤을 보고 아무것도 지우지 않는다 (PX-6)
                 self.seg_table.setEnabled(True)
 
     def _on_seg_edited(self):
@@ -2154,13 +2155,23 @@ class MainWindow(QMainWindow):
         duration = a.duration
         key = autosplit.words_key(words) if words else None
         stop = threading.Event()
+        gate = threading.Lock()   # 멈춤과 삭제 시작이 엇갈리지 않게 한다 (PX-6)
+        state = {"deleting": False}
+
+        def cancel():
+            """멈추게 하고, 이미 저장본 삭제를 시작했으면 True(그때만 끝날 때까지 기다린다)."""
+            with gate:
+                stop.set()
+                return state["deleting"]
 
         def job():  # 작업 스레드: 분리 → 잡음 추정 → 구간별 노이즈 제거·페이드 → 이전 저장본 삭제 → 번호 부여
             out = autosplit.split(words, duration, mono, rate) if words else segs
             prof = profile if profile is not None or not level else denoise.estimate_profile(mono, rate)
             full = autosplit.render(samples, rate, out, level, prof, stop)
-            if stop.is_set():
-                return {"cancelled": True}
+            with gate:
+                if stop.is_set():
+                    return {"cancelled": True}
+                state["deleting"] = bool(words)
             if words:
                 try:
                     for n in remove:
@@ -2179,7 +2190,7 @@ class MainWindow(QMainWindow):
         self.player.stop()
         w = TaskWorker(job, self)
         w.tag = {"folders": folders, "base": base, "audio": a, "new": bool(words)}
-        w.cancel = stop.set  # 파일을 옮기거나 창을 닫으면 구간 사이에서 멈춘다
+        w.cancel = cancel  # 파일을 옮기거나 창을 닫으면 구간 사이에서 멈춘다
         self.seg_table.setEnabled(not words)  # 새로 나누는 동안 고친 내용은 어차피 사라지므로 잠근다
         w.result.connect(self._on_auto_done)
         self._workers.add(w)
