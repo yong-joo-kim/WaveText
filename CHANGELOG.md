@@ -2,6 +2,9 @@
 
 ## 미배포
 
+### 추가
+- 자동분할생성: 선택한 구간을 앞·뒤 구간과 합치기(Ctrl+Shift+↑·↓). 앞 구간 번호를 쓰고 문장·소리를 새 구간에 맞추며, 없어진 구간의 저장본은 [선택 저장] 때 확인 후 삭제
+
 ### 변경
 - 저장 폴더 이름·문구: 분할 Wav → 사용자 분할 음성 Wav(`manual-part-wav`), 분할 음성인식 Text → 사용자 분할 음성인식 Text(`manual-part-stt`), 자동 분할 음성 Wav(`auto-part-wav`, 이전 `study-part-wav`)·자동 분할 음성인식 Text(`auto-part-stt`, 이전 `study-part-stt`)를 저장 폴더 설정 창에 추가해 위치 지정 가능. 이전 폴더는 자동으로 옮기지 않음
 - 자동분할생성: 원본 음성인식 결과를 `full-stt`(txt·json) 하나로 함께 쓰고 `study-full-stt` 복사본 저장을 없앰

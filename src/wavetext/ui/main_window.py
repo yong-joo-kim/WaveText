@@ -579,7 +579,13 @@ class MainWindow(QMainWindow):
         self.btn_auto_save.setProperty("kind", "primary")
         self.btn_auto_save.setToolTip("선택한 구간 분할된 Wave 파일과 음성인식 Text 파일을 자동 분할 폴더(auto-part-wav·auto-part-stt)에 저장 (Ctrl+S)")
         self.btn_auto_save.clicked.connect(self.save_auto)
-        for b in (self.btn_auto_all, self.btn_auto_run, self.btn_auto_save):
+        self.btn_merge_prev = QPushButton("앞 구간과 합치기")
+        self.btn_merge_prev.setToolTip("선택한 구간을 바로 앞 구간과 하나로 합칩니다 (Ctrl+Shift+↑)")
+        self.btn_merge_prev.clicked.connect(lambda: self.merge_seg(-1))
+        self.btn_merge_next = QPushButton("뒤 구간과 합치기")
+        self.btn_merge_next.setToolTip("선택한 구간을 바로 뒤 구간과 하나로 합칩니다 (Ctrl+Shift+↓)")
+        self.btn_merge_next.clicked.connect(lambda: self.merge_seg(1))
+        for b in (self.btn_merge_prev, self.btn_merge_next, self.btn_auto_all, self.btn_auto_run, self.btn_auto_save):
             hh.addWidget(b)
         self.auto_stack = QStackedWidget()
         self.auto_empty = QLabel(objectName="empty")
@@ -709,6 +715,7 @@ class MainWindow(QMainWindow):
         for key, slot in (("Space", self.toggle_src_play), ("Ctrl+Space", self._auto_play_current), ("Ctrl+S", self.save_auto),
                           ("F5", lambda: self.run_src_stt(False)), ("PgUp", lambda: self.step_file(-1)),
                           ("PgDown", lambda: self.step_file(1)),
+                          ("Ctrl+Shift+Up", lambda: self.merge_seg(-1)), ("Ctrl+Shift+Down", lambda: self.merge_seg(1)),
                           *((z[4], z[2]) for z in zoom),
                           ("Ctrl+Up", lambda: self.auto_wave.set_vzoom(self.auto_wave.vzoom * 1.5)),
                           ("Ctrl+Down", lambda: self.auto_wave.set_vzoom(self.auto_wave.vzoom / 1.5))):
@@ -1851,6 +1858,9 @@ class MainWindow(QMainWindow):
         self.btn_auto_run.setEnabled(words and not busy)
         self.btn_auto_save.setEnabled(bool(self.segs) and not busy)
         self.btn_auto_all.setEnabled(bool(self.segs) and not busy)
+        row = self.seg_table.currentRow()
+        self.btn_merge_prev.setEnabled(not busy and 0 < row < len(self.segs))
+        self.btn_merge_next.setEnabled(not busy and 0 <= row < len(self.segs) - 1)
         self.auto_wave.band_edit = bool(self.segs) and not busy  # 소리를 만들거나 저장하는 중에는 시작·끝을 고정한다
         self.auto_wave.update()
         if self.audio is None:
@@ -1937,6 +1947,7 @@ class MainWindow(QMainWindow):
         self.auto_wave.set_playhead(s.t0)
         self._show_time(s.t0)
         self.sync_src_text(s.t0)
+        self._auto_refresh()  # 앞·뒤 구간과 합치기 단추는 고른 행에 따라 켜고 끈다
 
     def _on_band_edited(self, i, t0, t1):
         """파형에서 구간 시작·끝을 옮겼다. 문장과 소리를 새 구간에 맞추고, 저장할 때 Wav를 다시 쓴다."""
@@ -1966,6 +1977,47 @@ class MainWindow(QMainWindow):
         note = "" if auto_text else " 직접 고친 문장은 그대로 두었으니 들어 보고 확인하세요."
         self.message(f"구간 {s.n}을 {fmt_t(t0)} ~ {fmt_t(t1)}({t1 - t0:.1f}초)로 바꿨습니다.{note} "
                      "[선택 저장]을 누르면 Wav도 다시 저장합니다.")
+
+    def merge_seg(self, step):
+        """선택한 구간을 바로 앞(step=-1) 또는 뒤(step=1) 구간과 합친다. 앞 구간의 번호를 쓰고,
+        없어지는 구간의 저장본은 [선택 저장] 때 확인을 거쳐 지운다."""
+        if not self.auto_mode or self._auto_worker is not None or self._auto_saving:
+            return
+        row = self.seg_table.currentRow()
+        other = row + step
+        if not (0 <= row < len(self.segs)) or not (0 <= other < len(self.segs)):
+            self.message("합칠 " + ("앞" if step < 0 else "뒤") + " 구간이 없습니다.")
+            return
+        self.seg_table.commit()
+        i, j = sorted((row, other))
+        a, b = self.segs[i], self.segs[j]
+        t0, t1 = a.t0, b.t1
+        if t1 - t0 > segment.MAX_SEG_S:
+            self.message(f"합치면 {t1 - t0:.1f}초로 최대 {segment.MAX_SEG_S:.0f}초를 넘어 합칠 수 없습니다.", error=True)
+            return
+        if self._play_seg is a or self._play_seg is b:
+            self.player.stop()
+        words = self.meta.get("words") or []
+        auto_text = all(" ".join(s.text.split()) == client.words_in(words, s.t0, s.t1) for s in (a, b))
+        a.t0, a.t1 = t0, t1
+        a.text = client.words_in(words, t0, t1) if auto_text else " ".join(f"{a.text.strip()} {b.text.strip()}".split())
+        a.flag = autosplit.length_flag(t1 - t0)
+        a.selected = (a.selected or b.selected) and a.flag != "short"
+        a.wav_stale = True
+        a.audio = None
+        if not self._auto_nr or self.profile is not None:  # 잡음 추정이 끝났으면 바로 만든다
+            autosplit.render(self.audio.samples, self.audio.rate, [a], self._auto_nr, self.profile)
+        del self.segs[j]
+        self.seg_table.set_segs(self.segs)
+        self.seg_table.select_row(i)
+        self._on_seg_edited()
+        self._src_spans = None
+        self._on_seg_picked(i)
+        self._auto_render_missing()
+        flag = {"long": " (15초 초과)", "short": " (4초 미만)"}.get(a.flag, "")
+        note = "" if auto_text else " 직접 고친 문장은 이어 붙였으니 들어 보고 확인하세요."
+        self.message(f"구간 {a.n}과 {b.n}을 합쳐 {fmt_t(t0)} ~ {fmt_t(t1)}({t1 - t0:.1f}초){flag}로 만들었습니다.{note} "
+                     "[선택 저장]을 누르면 반영합니다.")
 
     def _auto_locate(self, t):
         i = autosplit.index_at(self.segs, t)
@@ -2170,14 +2222,15 @@ class MainWindow(QMainWindow):
             self.message("구간 소리를 준비하는 중입니다. 잠시 후 다시 누르세요.")
             return
         have = paths.auto_numbers(folders, base)
-        drop = sorted(s.n for s in self.segs if not s.selected and s.n in have)
+        # 저장 선택을 해제했거나 다른 구간에 합쳐져 없어진 구간의 저장본
+        drop = sorted(have - {s.n for s in chosen})
         if not chosen and not drop:
             self.message("저장할 구간을 선택하세요.")
             return
         if drop:
             names = "\n".join(paths.auto_wav_path(folders, base, n).name for n in drop[:10])
             more = f"\n… 외 {len(drop) - 10}쌍" if len(drop) > 10 else ""
-            if not self._ask_no_default("저장 해제한 쌍 삭제", f"저장 선택을 해제한 {len(drop)}쌍의 Wav와 Text를 자동 분할 폴더에서 삭제합니다."
+            if not self._ask_no_default("저장 해제한 쌍 삭제", f"저장 선택을 해제했거나 합쳐서 없어진 {len(drop)}쌍의 Wav와 Text를 자동 분할 폴더에서 삭제합니다."
                                         f" 되돌릴 수 없습니다.\n\n{names}{more}"):
                 self.message("저장을 취소했습니다.")
                 return

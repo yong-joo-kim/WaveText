@@ -9,7 +9,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from wavetext import paths
-from wavetext.audio import wavio
+from wavetext.audio import segment, wavio
 from wavetext.stt import client
 from wavetext.ui import segments, waveform
 from tests.gui.test_main_window import FakeWorker, make_pair, src_stt, win  # noqa: F401  (win은 픽스처)
@@ -632,3 +632,59 @@ def test_delete_pair_recounts_from_disk(win, qtbot, monkeypatch):  # noqa: F811
     win.delete_pair()
     answer(monkeypatch, QMessageBox.StandardButton.Discard)
     assert win.counts["a_0001"] == paths.pair_count(win.folders, "a_0001") == 0
+
+
+def test_merge_with_prev_and_next(auto, qtbot, monkeypatch):
+    """선택한 구간을 앞·뒤 구간과 합친다: 앞 구간 번호를 쓰고 문장·소리를 새 구간에 맞춘다."""
+    split_done(auto, qtbot)
+    assert len(auto.segs) == 2
+    a, b = auto.segs
+    t0, t1, n = a.t0, b.t1, a.n
+    auto.seg_table.select_row(0)
+    auto._on_seg_picked(0)
+    assert not auto.btn_merge_prev.isEnabled() and auto.btn_merge_next.isEnabled()
+    auto.merge_seg(-1)                                     # 첫 구간은 앞 구간이 없다
+    assert len(auto.segs) == 2
+    auto.seg_table.select_row(1)
+    auto._on_seg_picked(1)
+    assert auto.btn_merge_prev.isEnabled() and not auto.btn_merge_next.isEnabled()
+    auto.merge_seg(-1)                                     # 뒤 구간('네')을 앞 구간과 합친다
+    assert len(auto.segs) == 1 and auto.seg_table.rowCount() == 1
+    m = auto.segs[0]
+    assert (m.t0, m.t1, m.n) == (t0, t1, n)
+    assert m.text == " ".join(w["word"] for w in WORDS)
+    assert m.flag == "" and m.selected and m.wav_stale and m.audio is not None
+    auto.save_auto()
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    wav = paths.auto_wav_path(auto.folders, "a_0001", n)
+    assert abs(wavio.read_info(wav).duration - (t1 - t0)) < 0.01
+    assert paths.read_text(paths.auto_txt_path(auto.folders, "a_0001", n)) == m.text
+    assert not m.wav_stale
+
+
+def test_merge_removes_saved_pair_of_absorbed_segment(auto, qtbot, monkeypatch):
+    """이미 저장한 뒤 구간을 합치면 [선택 저장] 때 확인을 거쳐 그 쌍을 지운다."""
+    split_done(auto, qtbot)
+    auto.seg_table.item(1, segments.COL_SAVE).setCheckState(Qt.CheckState.Checked)
+    auto.save_auto()
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    n1, n2 = auto.segs[0].n, auto.segs[1].n
+    assert paths.auto_numbers(auto.folders, "a_0001") == {n1, n2}
+    auto.seg_table.select_row(0)
+    auto.merge_seg(1)                                      # 앞 구간을 뒤 구간과 합친다
+    assert [s.n for s in auto.segs] == [n1]
+    answer(monkeypatch, QMessageBox.StandardButton.No)
+    auto.save_auto()                                       # 삭제를 거절하면 저장하지 않는다
+    assert paths.auto_numbers(auto.folders, "a_0001") == {n1, n2}
+    answer(monkeypatch, QMessageBox.StandardButton.Yes)
+    auto.save_auto()
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    assert paths.auto_numbers(auto.folders, "a_0001") == {n1}
+
+
+def test_merge_refuses_over_max_length(auto, qtbot, monkeypatch):
+    split_done(auto, qtbot)
+    monkeypatch.setattr(segment, "MAX_SEG_S", 3.0)
+    auto.seg_table.select_row(0)
+    auto.merge_seg(1)
+    assert len(auto.segs) == 2 and "넘어 합칠 수 없습니다" in auto.auto_msg.text()
