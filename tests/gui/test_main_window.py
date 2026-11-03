@@ -289,3 +289,21 @@ def test_selection_length_resets_on_file_change(win):
     assert (win.sp_start.value(), win.sp_end.value()) == (0, 0)
     assert win.lbl_len.text() == "길이 - (최대 30초)"
     assert not win.btn_create.isEnabled()
+
+
+def test_delete_icon_next_to_play(win, qtbot, monkeypatch):
+    """③ 재생 단추 옆 🗑 단추로 선택한 쌍을 확인 후 삭제한다. 쌍이 없으면 꺼진다."""
+    assert win.btn_out_del.text() == "🗑 삭제" and not win.btn_out_del.isEnabled()
+    lay = win.btn_out_play.parentWidget().layout()
+    assert lay.indexOf(win.btn_out_del) == lay.indexOf(win.btn_out_play) + 1   # 재생 단추 바로 옆
+    win.wave.set_selection((1.0, 2.0))
+    make_pair(win, qtbot)
+    wav = win.folders.wav_dir / "a_0001.part-1.wav"
+    assert win.btn_out_del.isEnabled()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+    win.btn_out_del.click()
+    assert wav.exists() and len(win.pairs) == 1
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    win.btn_out_del.click()
+    assert not wav.exists() and win.pairs == []
+    assert not win.btn_out_del.isEnabled()

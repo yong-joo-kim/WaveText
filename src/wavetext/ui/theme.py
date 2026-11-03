@@ -82,6 +82,10 @@ QPushButton[kind="primary"]:hover {{ background: {c['primary-60']}; border-color
 QPushButton[kind="primary"]:pressed {{ background: {c['primary-70']}; }}
 QPushButton[kind="primary"]:disabled {{ background: {c['gray-10']}; color: {c['gray-50']}; border-color: {c['gray-10']}; }}
 QPushButton#create {{ min-height: 40px; padding: 0 10px; font-size: 15px; }}
+QPushButton[kind="danger"] {{ color: {c['danger-60']}; border-color: {c['danger-10']}; padding: 0 10px; }}
+QPushButton[kind="danger"]:hover {{ background: {c['danger-5']}; border-color: {c['danger-50']}; }}
+QPushButton[kind="danger"]:pressed {{ background: {c['danger-10']}; }}
+QPushButton[kind="danger"]:disabled {{ background: {c['gray-10']}; color: {c['gray-50']}; border-color: {c['gray-10']}; }}
 QPushButton[kind="toggle"] {{ border-radius: 0; padding: 0 12px; font-size: 13px; }}
 QPushButton[kind="toggle"]:checked {{ background: {c['primary-50']}; border-color: {c['primary-50']}; color: #ffffff; font-weight: 700; }}
 QPushButton[kind="chip"] {{ min-height: 26px; border-radius: 4px; font-size: 13px; padding: 0 12px; }}

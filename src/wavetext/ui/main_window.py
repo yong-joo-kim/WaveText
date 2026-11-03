@@ -495,6 +495,13 @@ class MainWindow(QMainWindow):
         self.btn_out_play.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_out_play.clicked.connect(self.play_out)
         hh.addWidget(self.btn_out_play)
+        self.btn_out_del = QPushButton("🗑 삭제")
+        self.btn_out_del.setProperty("kind", "danger")
+        self.btn_out_del.setToolTip("선택한 학습용 파일 쌍(part-N.wav · stt-N.txt) 삭제 (Del)")
+        self.btn_out_del.setAccessibleName("선택한 학습용 파일 쌍 삭제")
+        self.btn_out_del.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_out_del.clicked.connect(self.delete_pair)
+        hh.addWidget(self.btn_out_del)
         chips = QWidget(objectName="chips")
         self.chip_box = QHBoxLayout(chips)
         self.chip_box.setContentsMargins(12, 6, 12, 6)
@@ -2339,6 +2346,7 @@ class MainWindow(QMainWindow):
             b.setEnabled(len(self.sources) > 1)
         self.btn_recog.setEnabled(has)
         self.btn_out_play.setEnabled(self._pair() is not None)
+        self.btn_out_del.setEnabled(self._pair() is not None and not self._creating)
         self.btn_out_recog.setEnabled(self._pair() is not None and not self._creating)
 
     def _nr_changed(self, i):
