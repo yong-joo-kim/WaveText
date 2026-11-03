@@ -9,15 +9,18 @@ from wavetext.paths import Folders
 def test_default_subfolders_under_source(tmp_path):
     f = Folders(src=str(tmp_path))
     assert f.full_dir == tmp_path / "full-stt"
-    assert f.wav_dir == tmp_path / "part-wav"
-    assert f.part_txt_dir == tmp_path / "part-stt"
+    assert f.wav_dir == tmp_path / "manual-part-wav"
+    assert f.part_txt_dir == tmp_path / "manual-part-stt"
+    assert f.auto_wav_dir == tmp_path / "auto-part-wav"
+    assert f.auto_txt_dir == tmp_path / "auto-part-stt"
 
 
 def test_each_folder_independent(tmp_path):
-    f = Folders(src=str(tmp_path), wav=str(tmp_path / "W"))
+    f = Folders(src=str(tmp_path), wav=str(tmp_path / "W"), auto_txt=str(tmp_path / "AT"))
     assert f.wav_dir == tmp_path / "W"
-    assert f.part_txt_dir == tmp_path / "part-stt"  # Wav만 지정해도 Text는 각자 기본 폴더
+    assert f.part_txt_dir == tmp_path / "manual-part-stt"  # Wav만 지정해도 Text는 각자 기본 폴더
     assert f.full_dir == tmp_path / "full-stt"
+    assert f.auto_txt_dir == tmp_path / "AT" and f.auto_wav_dir == tmp_path / "auto-part-wav"
 
 
 def test_source_required():
@@ -72,19 +75,20 @@ def test_text_utf8_no_bom(tmp_path):
     assert paths.read_text(tmp_path / "없음.txt") is None
 
 
-def test_study_paths_numbers_and_remove(tmp_path):
+def test_auto_paths_numbers_and_remove(tmp_path):
     f = Folders(src=str(tmp_path), full="", wav=str(tmp_path / "w"), part_txt="")
-    assert paths.study_full_path(f, "a") == tmp_path / "study-full-stt" / "a.stt.txt"
-    assert paths.study_wav_path(f, "a", 3) == tmp_path / "study-part-wav" / "a.part-3.wav"
-    assert paths.study_txt_path(f, "a", 3) == tmp_path / "study-part-stt" / "a.stt-3.txt"
-    assert paths.study_next_number(f, "a") == 1
-    paths.write_text(paths.study_wav_path(f, "a", 2), "x")
-    paths.write_text(paths.study_txt_path(f, "a", 5), "x")
-    assert paths.study_numbers(f, "a") == {2, 5} and paths.study_next_number(f, "a") == 6
-    paths.study_remove(f, "a", 2)
-    assert paths.study_numbers(f, "a") == {5}
+    assert paths.auto_wav_path(f, "a", 3) == tmp_path / "auto-part-wav" / "a.part-3.wav"
+    assert paths.auto_txt_path(f, "a", 3) == tmp_path / "auto-part-stt" / "a.stt-3.txt"
+    assert paths.auto_next_number(f, "a") == 1
+    paths.write_text(paths.auto_wav_path(f, "a", 2), "x")
+    paths.write_text(paths.auto_txt_path(f, "a", 5), "x")
+    assert paths.auto_numbers(f, "a") == {2, 5} and paths.auto_next_number(f, "a") == 6
+    paths.auto_remove(f, "a", 2)
+    assert paths.auto_numbers(f, "a") == {5}
     with pytest.raises(ValueError):
-        Folders().study_dir("full")
+        Folders().auto_wav_dir
+    g = Folders(src=str(tmp_path), auto_wav=str(tmp_path / "AW"))   # 직접 지정한 자동 분할 폴더
+    assert paths.auto_wav_path(g, "a", 1) == tmp_path / "AW" / "a.part-1.wav"
 
 
 def test_split_record_roundtrip(tmp_path):
@@ -100,11 +104,11 @@ def test_split_record_roundtrip(tmp_path):
     assert paths.load_split(f, "a") is None
 
 
-def test_pair_counts_include_study_folder(tmp_path):
+def test_pair_counts_include_auto_folder(tmp_path):
     f = Folders(src=str(tmp_path))
     paths.write_text(paths.part_wav_path(f, "a", 1), "x")
-    paths.write_text(paths.study_wav_path(f, "a", 1), "x")
-    paths.write_text(paths.study_wav_path(f, "a", 2), "x")
-    paths.write_text(paths.study_wav_path(f, "b", 1), "x")
+    paths.write_text(paths.auto_wav_path(f, "a", 1), "x")
+    paths.write_text(paths.auto_wav_path(f, "a", 2), "x")
+    paths.write_text(paths.auto_wav_path(f, "b", 1), "x")
     assert paths.pair_counts(f) == {"a": 3, "b": 1}
     assert paths.pair_count(f, "a") == 3 and paths.pair_count(f, "없음") == 0

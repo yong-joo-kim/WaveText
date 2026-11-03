@@ -2,7 +2,7 @@
 자동분할생성은 별도 창에서 진행한다(창이 열려 있으면 메인 창은 쓸 수 없다)."""
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         self.btn_auto_run.clicked.connect(self.run_auto_split)
         self.btn_auto_save = QPushButton("선택 저장")
         self.btn_auto_save.setProperty("kind", "primary")
-        self.btn_auto_save.setToolTip("선택한 구간 분할된 Wave 파일과 음성인식 Text 파일을 학습용 폴더에 저장 (Ctrl+S)")
+        self.btn_auto_save.setToolTip("선택한 구간 분할된 Wave 파일과 음성인식 Text 파일을 자동 분할 폴더(auto-part-wav·auto-part-stt)에 저장 (Ctrl+S)")
         self.btn_auto_save.clicked.connect(self.save_auto)
         for b in (self.btn_auto_all, self.btn_auto_run, self.btn_auto_save):
             hh.addWidget(b)
@@ -797,8 +797,7 @@ class MainWindow(QMainWindow):
     def choose_source(self):
         d = pick_folder(self, "원본 음성 폴더 선택", self.folders.src or str(Path.home()))
         if d:
-            f = Folders(str(Path(d)), self.folders.full, self.folders.wav, self.folders.part_txt)
-            self.open_folders(f)
+            self.open_folders(replace(self.folders, src=str(Path(d))))
 
     def open_folder_dialog(self):
         dlg = FolderDialog(self.folders, self)
@@ -812,7 +811,7 @@ class MainWindow(QMainWindow):
         self._auto_flush()
         self._auto_cancel()
         self.folders = folders
-        self.cfg["folders"] = {"src": folders.src, "full": folders.full, "wav": folders.wav, "part_txt": folders.part_txt}
+        self.cfg["folders"] = asdict(folders)
         self._save_cfg()
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -1831,8 +1830,8 @@ class MainWindow(QMainWindow):
             return
         folders, base = self._auto_key
         for s in self.segs:
-            ok = paths.study_wav_path(folders, base, s.n).exists() and paths.study_txt_path(folders, base, s.n).exists()
-            s.saved_text = (paths.read_text(paths.study_txt_path(folders, base, s.n)) or "") if ok else None
+            ok = paths.auto_wav_path(folders, base, s.n).exists() and paths.auto_txt_path(folders, base, s.n).exists()
+            s.saved_text = (paths.read_text(paths.auto_txt_path(folders, base, s.n)) or "") if ok else None
 
     def _auto_bands(self):
         def kind(s):
@@ -1871,7 +1870,8 @@ class MainWindow(QMainWindow):
         else:
             set_badge(self.auto_badge, "none", "-")
         try:
-            self.lbl_auto_dirs.setText("저장 폴더: " + " · ".join(str(self.folders.study_dir(k)) for k in ("full", "wav", "txt")))
+            f = self.folders
+            self.lbl_auto_dirs.setText(f"저장 폴더: {f.full_dir} · {f.auto_wav_dir} · {f.auto_txt_dir}")
         except ValueError:
             self.lbl_auto_dirs.setText("저장 폴더 미설정")
 
@@ -2017,7 +2017,7 @@ class MainWindow(QMainWindow):
 
     def _auto_after_stt(self, base):
         """인식이 끝나면 구간을 나눈다. 이전 구간이나 저장본이 있으면 입력 중에 확인 창이 뜨지 않게 사용자가 직접 실행한다."""
-        if not self.segs and not paths.study_numbers(self.folders, base):
+        if not self.segs and not paths.auto_numbers(self.folders, base):
             if self.auto_mode:
                 self.run_auto_split()
             return
@@ -2039,9 +2039,9 @@ class MainWindow(QMainWindow):
             return
         self._auto_flush()
         base = self.sources[self.cur].stem
-        saved = paths.study_numbers(self.folders, base)
+        saved = paths.auto_numbers(self.folders, base)
         if saved or self.segs:
-            note = (f"학습용 폴더에 저장된 {len(saved)}쌍과 원본 인식 Text도 삭제합니다. 되돌릴 수 없습니다." if saved
+            note = (f"자동 분할 폴더에 저장된 {len(saved)}쌍을 삭제합니다. 되돌릴 수 없습니다." if saved
                     else "수정한 문장과 저장 선택이 사라집니다.")
             if not self._ask_no_default("다시 자동 분할", f"이전 구간을 버리고 다시 나눌까요? {note}"):
                 self.message("이전 구간을 유지합니다. ② 문장이 구간 문장과 다를 수 있습니다.")
@@ -2073,12 +2073,10 @@ class MainWindow(QMainWindow):
             if words:
                 try:
                     for n in remove:
-                        paths.study_remove(folders, base, n)
-                    if remove:
-                        paths.study_full_path(folders, base).unlink(missing_ok=True)
+                        paths.auto_remove(folders, base, n)
                 except OSError as e:  # 일부만 지워졌으면 이전 구간을 두고 실제 파일 상태를 다시 표시한다
                     return {"remove_failed": str(e)}
-                first = paths.study_next_number(folders, base)
+                first = paths.auto_next_number(folders, base)
                 for i, s in enumerate(out):
                     s.n = first + i
                 try:  # 저장본을 지운 뒤에는 파일을 옮겨도 새 구간이 남도록 여기서 기록한다
@@ -2171,17 +2169,16 @@ class MainWindow(QMainWindow):
             self._auto_render_missing()
             self.message("구간 소리를 준비하는 중입니다. 잠시 후 다시 누르세요.")
             return
-        have = paths.study_numbers(folders, base)
+        have = paths.auto_numbers(folders, base)
         drop = sorted(s.n for s in self.segs if not s.selected and s.n in have)
         if not chosen and not drop:
             self.message("저장할 구간을 선택하세요.")
             return
         if drop:
-            names = "\n".join(paths.study_wav_path(folders, base, n).name for n in drop[:10])
+            names = "\n".join(paths.auto_wav_path(folders, base, n).name for n in drop[:10])
             more = f"\n… 외 {len(drop) - 10}쌍" if len(drop) > 10 else ""
-            last = "" if chosen or (have - set(drop)) else " 남는 쌍이 없으므로 원본 인식 Text도 삭제합니다."
-            if not self._ask_no_default("저장 해제한 쌍 삭제", f"저장 선택을 해제한 {len(drop)}쌍의 Wav와 Text를 학습용 폴더에서 삭제합니다."
-                                        f"{last} 되돌릴 수 없습니다.\n\n{names}{more}"):
+            if not self._ask_no_default("저장 해제한 쌍 삭제", f"저장 선택을 해제한 {len(drop)}쌍의 Wav와 Text를 자동 분할 폴더에서 삭제합니다."
+                                        f" 되돌릴 수 없습니다.\n\n{names}{more}"):
                 self.message("저장을 취소했습니다.")
                 return
         rate, sampwidth = self.audio.rate, self.audio.info.sampwidth
@@ -2192,22 +2189,18 @@ class MainWindow(QMainWindow):
             errors, rewritten = [], []
             for n in drop:
                 try:
-                    paths.study_remove(folders, base, n)
+                    paths.auto_remove(folders, base, n)
                 except OSError as e:
                     errors.append(f"{n}번 삭제: {e}")
             for n, audio, text, stale in items:
                 try:
-                    wav = paths.study_wav_path(folders, base, n)
+                    wav = paths.auto_wav_path(folders, base, n)
                     if stale or not wav.exists():  # 시작·끝을 고친 구간만 다시 쓰고, 나머지는 이미 있으면 그대로 둔다
                         wavio.write(wav, audio, rate, sampwidth, replace=stale)
-                    paths.write_text(paths.study_txt_path(folders, base, n), text)
+                    paths.write_text(paths.auto_txt_path(folders, base, n), text)
                     rewritten.append(n)
                 except OSError as e:
                     errors.append(f"{n}번: {e}")
-            if paths.study_numbers(folders, base):
-                paths.write_text(paths.study_full_path(folders, base), full)
-            else:
-                paths.study_full_path(folders, base).unlink(missing_ok=True)
             return {"count": len(items), "errors": errors, "written": rewritten}
 
         self.player.stop()
@@ -2240,9 +2233,9 @@ class MainWindow(QMainWindow):
         elif r["errors"]:
             self.message(f"학습용 저장 중 {len(r['errors'])}건 실패: {r['errors'][0]}", error=True)
         else:
-            done = f"학습용 {r['count']}쌍과 원본 인식 Text를 저장했습니다" if r["count"] else "해제한 쌍을 삭제했습니다"
+            done = f"학습용 {r['count']}쌍을 저장했습니다" if r["count"] else "해제한 쌍을 삭제했습니다"
             note = " · 쌍 문장은 이전 인식 결과 기준입니다" if w.tag["stale"] else ""
-            self.message(f"{done}{note} · {self.folders.study_dir('wav').parent}")
+            self.message(f"{done}{note} · {self.folders.auto_wav_dir}")
 
     # ================= 상태 =================
     def _dir_note(self, key):
@@ -2269,15 +2262,17 @@ class MainWindow(QMainWindow):
             self.st_sel.setText(f"{s[0]:.3f} to {s[1]:.3f} ({s[1] - s[0]:.3f})" if s else f"0.000 to {a.duration:.3f} (전체)")
         done = sum(1 for p in self.sources if self.counts.get(p.stem.lower()))
         try:
-            dirs = f"원본 음성인식 Text → {self.folders.full_dir} · 분할 Wav → {self.folders.wav_dir} · 분할 음성인식 Text → {self.folders.part_txt_dir}"
+            f = self.folders
+            dirs = (f"원본 음성인식 Text → {f.full_dir} · 사용자 분할 음성 Wav → {f.wav_dir} · 사용자 분할 음성인식 Text → {f.part_txt_dir}"
+                    f" · 자동 분할 음성 Wav → {f.auto_wav_dir} · 자동 분할 음성인식 Text → {f.auto_txt_dir}")
         except ValueError:
             dirs = "저장 폴더 미설정"
         self.st_prog.setText(f"진행: 생성 완료 {done:,}개 / 전체 {len(self.sources):,}개 · {dirs}")
         self.st_prog.setToolTip(dirs.replace(" · ", "\n"))
         self.lbl_full_dir.setText(f"원본 음성인식 Text: {self._dir_note('full')}")
         if self._pair() is None:
-            self.lbl_out_path.setText(f"분할 Wav: {self._dir_note('wav')}")
-            self.lbl_txt_path.setText(f"분할 음성인식 Text: {self._dir_note('part_txt')}")
+            self.lbl_out_path.setText(f"사용자 분할 음성 Wav: {self._dir_note('wav')}")
+            self.lbl_txt_path.setText(f"사용자 분할 음성인식 Text: {self._dir_note('part_txt')}")
 
     def _update_controls(self):
         ok = self.audio is not None and bool(self.wave.sel) and segment.selection_ok(*self.wave.sel) and not self._creating

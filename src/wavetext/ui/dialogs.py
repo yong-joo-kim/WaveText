@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
                                QTreeView, QVBoxLayout)
 
 from wavetext import config
-from wavetext.paths import DEFAULT_SUBDIRS, Folders
+from wavetext.paths import DEFAULT_SUBDIRS, FOLDER_KEYS, Folders
 from wavetext.ui.workers import HealthWorker
 
 SRC_HINT = "필수 입력입니다. 아래 폴더를 비워 두면 이 폴더 아래에 만듭니다."
@@ -51,15 +51,17 @@ class FolderDialog(QDialog):
     """저장 폴더 설정. 원본 음성 폴더는 필수, 나머지는 비우면 원본 아래 기본 폴더."""
 
     ROWS = [
-        ("full", "원본 음성인식 Text", "원본 전체 음성인식 결과 <b>원본이름.stt.txt</b>"),
-        ("wav", "분할 Wav", "분할 음성파일 <b>원본이름.part-1.wav</b>, part-2.wav …"),
-        ("part_txt", "분할 음성인식 Text", "분할 음성파일 음성인식 결과 <b>원본이름.stt-1.txt</b>, stt-2.txt …"),
+        ("full", "원본 음성인식 Text", "원본 전체 음성인식 결과 <b>원본이름.stt.txt</b>, 단어 시간·구간 기록 <b>.stt.json</b>·<b>.split.json</b> (사용자·자동 분할 공용)"),
+        ("wav", "사용자 분할 음성 Wav", "직접 선택해 자른 음성파일 <b>원본이름.part-1.wav</b>, part-2.wav …"),
+        ("part_txt", "사용자 분할 음성인식 Text", "직접 선택해 자른 음성파일의 문장 <b>원본이름.stt-1.txt</b>, stt-2.txt …"),
+        ("auto_wav", "자동 분할 음성 Wav", "자동분할생성으로 저장한 음성파일 <b>원본이름.part-1.wav</b>, part-2.wav …"),
+        ("auto_txt", "자동 분할 음성인식 Text", "자동분할생성으로 저장한 문장 <b>원본이름.stt-1.txt</b>, stt-2.txt …"),
     ]
 
     def __init__(self, folders, parent=None):
         super().__init__(parent)
         self.setWindowTitle("저장 폴더 설정")
-        self.setMinimumWidth(780)
+        self.setMinimumWidth(920)
         g = QGridLayout()
         g.setHorizontalSpacing(8)
         g.setVerticalSpacing(4)
@@ -125,7 +127,7 @@ class FolderDialog(QDialog):
         self.src_hint.setText(msg or SRC_HINT)
 
     def folders(self):
-        return Folders(self.src.text().strip().rstrip("\\/"), *(self.edits[k].text().strip() for k in ("full", "wav", "part_txt")))
+        return Folders(src=self.src.text().strip().rstrip("\\/"), **{k: self.edits[k].text().strip() for k in FOLDER_KEYS})
 
     def accept(self):
         src = self.src.text().strip()

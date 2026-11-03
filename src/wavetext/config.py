@@ -26,7 +26,7 @@ DEFAULT = {
     "model": DEFAULT_MODEL,
     "stt": {"server": dict(DEFAULT_SERVER), "api_key": "", "realtime_pacing": False},
     "nr_level": 2,        # 노이즈 제거: 0 사용 안 함, 1 약, 2 중, 3 강
-    "folders": {"src": "", "full": "", "wav": "", "part_txt": ""},
+    "folders": {"src": "", "full": "", "wav": "", "part_txt": "", "auto_wav": "", "auto_txt": ""},
 }
 
 # ZIEUM 스트리밍 음성인식 요청에 쓰는 고정 항목

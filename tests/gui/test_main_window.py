@@ -81,7 +81,8 @@ def win(qtbot, tmp_path, monkeypatch, speech_wav):
 def test_opens_first_unprocessed_and_status(win):
     assert win.sources[0].name == "a_0001.wav" and win.cur == 0
     assert win.st_fmt.text() == "6.000초 · Wave PCM signed 16 bit, 8000 Hz, 128 kbps, mono"
-    assert "분할 Wav →" in win.st_prog.text() and "원본 음성인식 Text →" in win.st_prog.text()
+    assert "사용자 분할 음성 Wav →" in win.st_prog.text() and "원본 음성인식 Text →" in win.st_prog.text()
+    assert "자동 분할 음성 Wav →" in win.st_prog.text()
     assert not win.btn_create.isEnabled()
 
 
@@ -220,12 +221,16 @@ def test_folder_dialog_requires_source(qtbot, tmp_path):
     dlg.accept()
     assert dlg.result() == 0 and "필수" in dlg.src_hint.text()
     dlg.src.setText(str(tmp_path))
-    assert dlg.edits["wav"].placeholderText() == f"비우면: {tmp_path}\\part-wav"
+    assert list(dlg.edits) == ["full", "wav", "part_txt", "auto_wav", "auto_txt"]
+    assert dlg.edits["wav"].placeholderText() == f"비우면: {tmp_path}\\manual-part-wav"
+    assert dlg.edits["auto_txt"].placeholderText() == f"비우면: {tmp_path}\\auto-part-stt"
     dlg.edits["wav"].setText(str(tmp_path / "W"))
+    dlg.edits["auto_wav"].setText(str(tmp_path / "AW"))
     dlg.accept()
     assert dlg.result() == 1
     f = dlg.folders()
-    assert f.wav_dir == tmp_path / "W" and f.part_txt_dir == tmp_path / "part-stt" and f.full_dir == tmp_path / "full-stt"
+    assert f.wav_dir == tmp_path / "W" and f.part_txt_dir == tmp_path / "manual-part-stt" and f.full_dir == tmp_path / "full-stt"
+    assert f.auto_wav_dir == tmp_path / "AW" and f.auto_txt_dir == tmp_path / "auto-part-stt"
 
 
 def test_drawer_filter(win, qtbot):

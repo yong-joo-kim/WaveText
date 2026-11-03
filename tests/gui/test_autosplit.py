@@ -1,6 +1,7 @@
 """자동분할생성 화면 흐름: 인식 → 자동 분할 → 파형 클릭 ↔ 목록 → 문장 수정 → 선택 저장 → 다시 열기."""
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QPoint, Qt, QTimer
@@ -138,12 +139,18 @@ def test_save_selected_only(auto, qtbot, tmp_path):
     auto.save_auto()
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
     f = auto.folders
-    assert paths.study_full_path(f, "a_0001").read_text(encoding="utf-8") == FakeWorker.reply[0]
-    wav, txt = paths.study_wav_path(f, "a_0001", 1), paths.study_txt_path(f, "a_0001", 1)
+    # 원본 인식 결과는 사용자 분할과 같은 full-stt의 txt·json 하나만 쓰고, 복사본 폴더는 만들지 않는다
+    assert paths.full_stt_path(f, "a_0001").read_text(encoding="utf-8") == FakeWorker.reply[0]
+    assert paths.meta_path(f, "a_0001").exists() and paths.split_path(f, "a_0001").exists()
+    assert paths.full_stt_path(f, "a_0001").parent.name == "full-stt"
+    assert not (Path(f.src) / "study-full-stt").exists()
+    assert paths.auto_wav_path(f, "a_0001", 1).parent.name == "auto-part-wav"
+    assert paths.auto_txt_path(f, "a_0001", 1).parent.name == "auto-part-stt"
+    wav, txt = paths.auto_wav_path(f, "a_0001", 1), paths.auto_txt_path(f, "a_0001", 1)
     assert txt.read_text(encoding="utf-8") == "고친 문장"
     info = wavio.read_info(wav)
     assert (info.rate, info.channels) == (auto.audio.rate, auto.audio.info.channels)
-    assert not paths.study_wav_path(f, "a_0001", 2).exists()
+    assert not paths.auto_wav_path(f, "a_0001", 2).exists()
     assert auto.segs[0].saved_text == "고친 문장" and auto.segs[1].saved_text is None
     assert not (f.wav_dir / "a_0001.part-1.wav").exists()                # 수동 분할 폴더는 그대로
     auto.segs[0].text = "또 고침"
@@ -193,7 +200,7 @@ def test_edited_bounds_rewrite_saved_wav(auto, qtbot):
     split_done(auto, qtbot)
     auto.save_auto()
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
-    wav = paths.study_wav_path(auto.folders, "a_0001", 1)
+    wav = paths.auto_wav_path(auto.folders, "a_0001", 1)
     before = wavio.read_info(wav).frames
     s = auto.segs[0]
     drag_edge(auto, 0, 0, s.t0 + 0.8)
@@ -202,7 +209,7 @@ def test_edited_bounds_rewrite_saved_wav(auto, qtbot):
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
     after = wavio.read_info(wav).frames
     assert after == round((s.t1 - s.t0) * auto.audio.rate) and after < before
-    assert paths.study_txt_path(auto.folders, "a_0001", 1).read_text(encoding="utf-8") == s.text
+    assert paths.auto_txt_path(auto.folders, "a_0001", 1).read_text(encoding="utf-8") == s.text
     assert not s.wav_stale and segments.seg_state(s).endswith("✓ 저장됨")
     assert paths.load_split(auto.folders, "a_0001")["segments"][0]["wav_stale"] is False
 
@@ -252,7 +259,7 @@ def test_uncheck_saved_pair_asks_then_deletes(auto, qtbot, monkeypatch):
     split_done(auto, qtbot)
     auto.save_auto()
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
-    wav = paths.study_wav_path(auto.folders, "a_0001", 1)
+    wav = paths.auto_wav_path(auto.folders, "a_0001", 1)
     auto.seg_table.item(0, segments.COL_SAVE).setCheckState(Qt.CheckState.Unchecked)
     assert auto.segs[0].selected is False
     answer(monkeypatch, QMessageBox.StandardButton.No)
@@ -261,7 +268,8 @@ def test_uncheck_saved_pair_asks_then_deletes(auto, qtbot, monkeypatch):
     answer(monkeypatch, QMessageBox.StandardButton.Yes)
     auto.save_auto()
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
-    assert not wav.exists() and not paths.study_full_path(auto.folders, "a_0001").exists()
+    assert not wav.exists()
+    assert paths.full_stt_path(auto.folders, "a_0001").exists()   # 원본 인식 결과는 공용이라 지우지 않는다
 
 
 def test_empty_text_blocks_save(auto, qtbot):
@@ -309,7 +317,7 @@ def test_resplit_needs_confirmation_and_removes_saved(auto, qtbot, monkeypatch):
     split_done(auto, qtbot)
     auto.save_auto()
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
-    wav = paths.study_wav_path(auto.folders, "a_0001", 1)
+    wav = paths.auto_wav_path(auto.folders, "a_0001", 1)
     auto.segs[0].text = "수정본"
     answer(monkeypatch, QMessageBox.StandardButton.No)
     auto.run_auto_split()
@@ -372,7 +380,7 @@ def test_recognition_never_opens_delete_prompt(auto, qtbot, monkeypatch):
     before = list(auto.segs)
     src_stt(auto, qtbot)
     assert asked == [] and auto.segs == before and auto._auto_worker is None
-    assert paths.study_wav_path(auto.folders, "a_0001", 1).exists()
+    assert paths.auto_wav_path(auto.folders, "a_0001", 1).exists()
     assert "자동 분할 실행" in auto.st_msg.text()
 
 
@@ -406,14 +414,14 @@ def test_failed_delete_keeps_old_list_and_shows_real_state(auto, qtbot, monkeypa
     auto.auto_select_all()
     auto.save_auto()
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
-    real = paths.study_remove
+    real = paths.auto_remove
 
     def fail_second(folders, base, n):
         if n == 2:
             raise PermissionError("잠김")
         real(folders, base, n)
 
-    monkeypatch.setattr(paths, "study_remove", fail_second)
+    monkeypatch.setattr(paths, "auto_remove", fail_second)
     answer(monkeypatch, QMessageBox.StandardButton.Yes)
     auto.run_auto_split()
     qtbot.waitUntil(lambda: auto._auto_worker is None, timeout=5000)
@@ -475,14 +483,14 @@ def test_new_segments_survive_moving_away_during_delete(auto, qtbot, monkeypatch
     auto.save_auto()
     qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
     started = threading.Event()
-    real = paths.study_remove
+    real = paths.auto_remove
 
     def slow(*a):
         started.set()
         time.sleep(0.2)
         real(*a)
 
-    monkeypatch.setattr(paths, "study_remove", slow)
+    monkeypatch.setattr(paths, "auto_remove", slow)
     answer(monkeypatch, QMessageBox.StandardButton.Yes)
     auto.run_auto_split()
     w = auto._auto_worker

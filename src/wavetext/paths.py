@@ -1,9 +1,10 @@
 """저장 폴더 결정, 파일 이름·번호 규칙, 원본 목록 (FR-01~03, FR-10~12, FR-16).
 
-- 원본 음성인식 Text: {원본이름}.stt.txt     (미지정 시 원본\\full-stt)
-- 분할 Wav:          {원본이름}.part-N.wav  (미지정 시 원본\\part-wav)
-- 분할 음성인식 Text: {원본이름}.stt-N.txt   (미지정 시 원본\\part-stt)
-- 자동분할생성 학습용: 원본\\study-full-stt, 원본\\study-part-wav, 원본\\study-part-stt (같은 이름 규칙, 위치 고정)
+- 원본 음성인식 Text:        {원본이름}.stt.txt     (미지정 시 원본\\full-stt) — 사용자·자동 분할 공용
+- 사용자 분할 음성 Wav:      {원본이름}.part-N.wav  (미지정 시 원본\\manual-part-wav)
+- 사용자 분할 음성인식 Text: {원본이름}.stt-N.txt   (미지정 시 원본\\manual-part-stt)
+- 자동 분할 음성 Wav:        {원본이름}.part-N.wav  (미지정 시 원본\\auto-part-wav)
+- 자동 분할 음성인식 Text:   {원본이름}.stt-N.txt   (미지정 시 원본\\auto-part-stt)
 """
 import json
 import os
@@ -14,16 +15,19 @@ from pathlib import Path
 
 PART_WAV_RE = re.compile(r"^(?P<base>.+)\.part-(?P<n>\d+)\.wav$", re.IGNORECASE)
 PART_TXT_RE = re.compile(r"^(?P<base>.+)\.stt-(?P<n>\d+)\.txt$", re.IGNORECASE)
-DEFAULT_SUBDIRS = {"full": "full-stt", "wav": "part-wav", "part_txt": "part-stt"}
-STUDY_SUBDIRS = {"full": "study-full-stt", "wav": "study-part-wav", "txt": "study-part-stt"}
+DEFAULT_SUBDIRS = {"full": "full-stt", "wav": "manual-part-wav", "part_txt": "manual-part-stt",
+                   "auto_wav": "auto-part-wav", "auto_txt": "auto-part-stt"}
+FOLDER_KEYS = tuple(DEFAULT_SUBDIRS)
 
 
 @dataclass
 class Folders:
     src: str = ""
-    full: str = ""      # 원본 음성인식 Text 폴더
-    wav: str = ""       # 분할 Wav 폴더
-    part_txt: str = ""  # 분할 음성인식 Text 폴더
+    full: str = ""      # 원본 음성인식 Text 폴더 (사용자·자동 분할 공용)
+    wav: str = ""       # 사용자 분할 음성 Wav 폴더
+    part_txt: str = ""  # 사용자 분할 음성인식 Text 폴더
+    auto_wav: str = ""  # 자동 분할 음성 Wav 폴더
+    auto_txt: str = ""  # 자동 분할 음성인식 Text 폴더
 
     def resolve(self, key):
         """지정했으면 그 폴더, 비었으면 원본 아래 기본 폴더."""
@@ -46,11 +50,13 @@ class Folders:
     def part_txt_dir(self):
         return self.resolve("part_txt")
 
-    def study_dir(self, key):
-        """자동분할생성 학습용 폴더: 항상 원본 음성 폴더 아래."""
-        if not self.src.strip():
-            raise ValueError("원본 음성 폴더가 지정되지 않았습니다.")
-        return Path(self.src.strip()) / STUDY_SUBDIRS[key]
+    @property
+    def auto_wav_dir(self):
+        return self.resolve("auto_wav")
+
+    @property
+    def auto_txt_dir(self):
+        return self.resolve("auto_txt")
 
 
 def full_stt_path(folders, base):
@@ -78,7 +84,7 @@ def save_meta(folders, base, meta):
 
 
 def split_path(folders, base):
-    """자동 분할 구간 기록: 원본 음성인식 Text 폴더의 {원본이름}.split.json (학습용 폴더에는 학습 파일만 둔다)."""
+    """자동 분할 구간 기록: 원본 음성인식 Text 폴더의 {원본이름}.split.json (자동 분할 폴더에는 학습 파일만 둔다)."""
     return folders.full_dir / f"{base}.split.json"
 
 
@@ -100,29 +106,25 @@ def save_split(folders, base, data):
     os.replace(tmp, path)
 
 
-def study_full_path(folders, base):
-    return folders.study_dir("full") / f"{base}.stt.txt"
+def auto_wav_path(folders, base, n):
+    return folders.auto_wav_dir / f"{base}.part-{n}.wav"
 
 
-def study_wav_path(folders, base, n):
-    return folders.study_dir("wav") / f"{base}.part-{n}.wav"
+def auto_txt_path(folders, base, n):
+    return folders.auto_txt_dir / f"{base}.stt-{n}.txt"
 
 
-def study_txt_path(folders, base, n):
-    return folders.study_dir("txt") / f"{base}.stt-{n}.txt"
+def auto_numbers(folders, base):
+    return _numbers(folders.auto_wav_dir, PART_WAV_RE, base) | _numbers(folders.auto_txt_dir, PART_TXT_RE, base)
 
 
-def study_numbers(folders, base):
-    return _numbers(folders.study_dir("wav"), PART_WAV_RE, base) | _numbers(folders.study_dir("txt"), PART_TXT_RE, base)
-
-
-def study_next_number(folders, base):
-    nums = study_numbers(folders, base)
+def auto_next_number(folders, base):
+    nums = auto_numbers(folders, base)
     return max(nums) + 1 if nums else 1
 
 
-def study_remove(folders, base, n):
-    for f in (study_wav_path(folders, base, n), study_txt_path(folders, base, n)):
+def auto_remove(folders, base, n):
+    for f in (auto_wav_path(folders, base, n), auto_txt_path(folders, base, n)):
         f.unlink(missing_ok=True)
 
 
@@ -168,10 +170,10 @@ def list_sources(src):
 
 
 def _pair_dirs(folders):
-    """쌍을 세는 폴더: 분할 Wav 폴더와 자동분할생성 학습용 Wav 폴더."""
+    """쌍을 세는 폴더: 사용자 분할 음성 Wav 폴더와 자동 분할 음성 Wav 폴더(같은 폴더면 한 번만)."""
     dirs = [folders.wav_dir]
-    if folders.src.strip() and folders.study_dir("wav") != dirs[0]:
-        dirs.append(folders.study_dir("wav"))
+    if folders.auto_wav_dir != dirs[0]:
+        dirs.append(folders.auto_wav_dir)
     return dirs
 
 
