@@ -99,6 +99,7 @@ QLineEdit:read-only {{ background: {c['gray-5']}; }}
 
 #pane {{ background: {c['gray-0']}; border: 1px solid {c['gray-20']}; border-radius: 10px; }}
 #paneHead {{ border-bottom: 1px solid {c['gray-10']}; }}
+#paneHead QPushButton {{ padding: 0 7px; }}
 #paneFoot {{ background: {c['secondary-5']}; border-top: 1px solid {c['gray-10']}; border-bottom-left-radius: 10px; border-bottom-right-radius: 10px; }}
 #paneFoot QLabel {{ font-size: 13px; color: {c['gray-70']}; }}
 #paneNo {{ background: {c['primary-50']}; color: #ffffff; border-radius: 11px; font-size: 13px; font-weight: 700; min-width: 22px; max-width: 22px; min-height: 22px; max-height: 22px; }}

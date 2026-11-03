@@ -290,3 +290,47 @@ def test_sending_stops_when_server_reports_error():
         client.transcribe(pcm, c, "m", "t", connect=lambda *a, **k: ws)
     assert "401" in str(e.value) and time.perf_counter() - t < 1.5
     assert sum(len(b) for b in ws.sent if isinstance(b, bytes)) < len(pcm) // 2
+
+
+class FakeSock:
+    def __init__(self, fail=False):
+        self.opts, self.ioctls, self.fail = [], [], fail
+
+    def setsockopt(self, *a):
+        if self.fail:
+            raise OSError("not supported")
+        self.opts.append(a)
+
+    def ioctl(self, *a):
+        self.ioctls.append(a)
+
+
+def test_keepalive_enabled_on_connection():
+    """C-8: 연결에 TCP keepalive를 켜서 신호 없이 끊긴 연결을 운영체제가 알아채게 한다."""
+    import socket
+    ws = FakeWS([words_reply("앞", 1.0), {"cmd": "finished"}])
+    ws.sock = FakeSock()
+    client.transcribe(b"\x00\x00" * 10, cfg(), "m", "t", connect=lambda *a, **k: ws)
+    assert (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1) in ws.sock.opts
+    if hasattr(socket, "SIO_KEEPALIVE_VALS"):
+        assert ws.sock.ioctls == [(socket.SIO_KEEPALIVE_VALS, (1, 10000, 2000))]
+    assert client._enable_keepalive(FakeWS([])) is False          # 소켓이 없으면 그냥 넘어간다
+    bad = FakeWS([])
+    bad.sock = FakeSock(fail=True)
+    assert client._enable_keepalive(bad) is False                  # 지원하지 않아도 인식은 계속한다
+
+
+def test_keepalive_on_real_socket():
+    """실제 소켓에도 옵션이 적용된다."""
+    import socket
+
+    class Holder:
+        pass
+
+    h = Holder()
+    h.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        assert client._enable_keepalive(h) is True
+        assert h.sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) != 0
+    finally:
+        h.sock.close()

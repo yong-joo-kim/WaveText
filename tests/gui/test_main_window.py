@@ -3,7 +3,7 @@ import json
 
 import pytest
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from wavetext import config, paths
 from wavetext.audio import wavio
@@ -355,3 +355,15 @@ def test_delete_blocked_while_creating(win, qtbot, monkeypatch):
     win._creating = False
     win.delete_pair()
     assert not wav.exists()
+
+
+def test_layout_shrinks_for_1360(win, qtbot):
+    """C-7: 좁은 화면에서 ① 안내 글은 줄어들고, 구역 머리 줄 단추는 여백을 줄여 ④ 단추 글자가 잘리지 않게 한다.
+    (offscreen은 실제 글꼴·테마가 없어 픽셀 폭을 비교할 수 없다. 실제 Windows 측정은 검증보고서 11절)"""
+    from PySide6.QtWidgets import QLabel, QSizePolicy
+    from wavetext.ui import theme
+    hint = next(l for l in win.findChildren(QLabel) if l.text().startswith("끌어서 구간 선택"))
+    assert hint.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored and hint.toolTip()
+    head = win.btn_out_part.parentWidget()
+    assert head.objectName() == "paneHead" and head.layout().spacing() <= 6
+    assert "#paneHead QPushButton { padding: 0 7px; }" in theme.stylesheet("Malgun Gothic", "Consolas")

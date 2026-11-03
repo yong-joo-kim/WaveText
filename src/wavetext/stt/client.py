@@ -4,6 +4,7 @@
 절차: ready(JSON) → PCM 바이너리(chunk_bytes 단위) → finalize → 서버 {"cmd":"finished"} 수신 시 종료.
 """
 import json
+import socket
 import threading
 import time
 import urllib.request
@@ -11,6 +12,29 @@ import urllib.request
 import websocket
 
 BYTES_PER_SEC = 16000  # 8kHz * 16bit * mono
+KEEPALIVE_IDLE_S = 10      # 이만큼 오가는 것이 없으면 운영체제가 연결 확인 신호를 보낸다
+KEEPALIVE_INTERVAL_S = 2   # 응답이 없으면 이 간격으로 다시 보낸다 (Windows는 10회, 약 30초 안에 끊김 판정)
+
+
+def _enable_keepalive(ws):
+    """TCP keepalive를 켠다 (C-8). 케이블이 빠지는 등 연결이 신호 없이 끊기면 수신이 오류로 끝나
+    대기(페이싱 끔은 음성 길이만큼)가 끝없이 이어지지 않는다. 확인 신호는 상대 운영체제가 답하므로
+    서버 프로그램의 지원이 필요 없다. 소켓이 없거나 지원하지 않으면 그냥 넘어간다."""
+    sock = getattr(ws, "sock", None)
+    if sock is None:
+        return False
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, "SIO_KEEPALIVE_VALS"):  # Windows
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, KEEPALIVE_IDLE_S * 1000, KEEPALIVE_INTERVAL_S * 1000))
+        else:
+            for name, value in (("TCP_KEEPIDLE", KEEPALIVE_IDLE_S), ("TCP_KEEPINTVL", KEEPALIVE_INTERVAL_S),
+                                ("TCP_KEEPCNT", 10)):
+                if hasattr(socket, name):
+                    sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), value)
+        return True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 class SttError(Exception):
@@ -161,6 +185,7 @@ def transcribe(pcm, cfg, model, tr_id, on_progress=None, stop=None, connect=None
         raise SttError(f"서버 거부({code})", retry=code not in (400, 401, 404))
     except Exception as e:
         raise SttError(_scrub(f"연결 실패: {type(e).__name__}: {e}", key))
+    _enable_keepalive(ws)
 
     msgs = []
     st = {"err": None, "done": False, "finished": False, "failed": False}

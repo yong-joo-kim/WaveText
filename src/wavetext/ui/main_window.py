@@ -371,8 +371,8 @@ class MainWindow(QMainWindow):
         v.setSpacing(0)
         head = QWidget(objectName="paneHead")
         hh = QHBoxLayout(head)
-        hh.setContentsMargins(12, 6, 12, 6)
-        hh.setSpacing(8)
+        hh.setContentsMargins(10, 6, 10, 6)  # 1440×900 이하 화면에서도 ④ 단추 글자가 잘리지 않게 간격을 줄인다 (C-7)
+        hh.setSpacing(6)
         n = QLabel(str(no), objectName="paneNo")
         n.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hh.addWidget(n)
@@ -427,7 +427,10 @@ class MainWindow(QMainWindow):
         fh.addWidget(self.lbl_len)
         fh.addStretch(1)
         hint = QLabel("끌어서 구간 선택 · 노란 경계선을 끌어 미세 조정 · 휠로 확대/축소")
-        fh.addWidget(hint)
+        hint.setToolTip(hint.text())
+        hint.setMinimumWidth(0)  # 좁은 화면에서는 안내 글이 줄어들고 입력칸이 자리를 차지한다 (C-7)
+        hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        fh.addWidget(hint, 1)
         v.addWidget(foot)
         return f
 
