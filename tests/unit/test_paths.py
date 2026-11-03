@@ -112,3 +112,21 @@ def test_pair_counts_include_auto_folder(tmp_path):
     paths.write_text(paths.auto_wav_path(f, "b", 1), "x")
     assert paths.pair_counts(f) == {"a": 3, "b": 1}
     assert paths.pair_count(f, "a") == 3 and paths.pair_count(f, "없음") == 0
+
+
+def test_folder_conflict_between_manual_and_auto(tmp_path):
+    """V3-2: 사용자 분할 폴더와 자동 분할 폴더가 같으면 알린다."""
+    assert paths.folder_conflict(Folders(src=str(tmp_path))) is None                     # 기본 폴더는 모두 다름
+    same = Folders(src=str(tmp_path), wav=str(tmp_path / "X"), auto_wav=str(tmp_path / "X"))
+    assert paths.folder_conflict(same) == ("wav", "auto_wav")
+    assert "사용자 분할 음성 Wav" in paths.folder_conflict_message(same)
+    txt = Folders(src=str(tmp_path), part_txt=str(tmp_path / "auto-part-stt"))            # 자동 기본 폴더와 같음
+    assert paths.folder_conflict(txt) == ("part_txt", "auto_txt")
+    assert paths.folder_conflict(Folders()) is None                                        # 원본 미지정은 비교 안 함
+
+
+def test_folders_from_dict_ignores_unknown_keys():
+    """V3-3: 다른 버전 설정의 모르는 키·문자열 아닌 값은 무시한다."""
+    f = Folders.from_dict({"src": "D:/a", "wav": 3, "bogus": "x", "auto_txt": "D:/t"})
+    assert (f.src, f.wav, f.auto_txt) == ("D:/a", "", "D:/t")
+    assert Folders.from_dict(None) == Folders()

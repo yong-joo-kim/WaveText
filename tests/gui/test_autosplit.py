@@ -688,3 +688,59 @@ def test_merge_refuses_over_max_length(auto, qtbot, monkeypatch):
     auto.seg_table.select_row(0)
     auto.merge_seg(1)
     assert len(auto.segs) == 2 and "넘어 합칠 수 없습니다" in auto.auto_msg.text()
+
+
+def _three_segs(auto):
+    import numpy as np
+    from wavetext.audio.autosplit import Seg
+    segs = [Seg(t0, t1, "", "", n, True, audio=np.zeros((10, 1), np.float32)) for n, (t0, t1) in
+            enumerate(((0.0, 1.5), (2.0, 3.5), (4.0, 5.5)), 1)]
+    auto._auto_set_segs(segs, auto._auto_key)
+    return segs
+
+
+def test_auto_save_blocked_when_folders_clash(auto, qtbot):
+    """V3-2: 설정 파일을 고쳐 폴더가 겹쳐도 자동분할 저장·다시 분할을 하지 않는다."""
+    from dataclasses import replace
+    split_done(auto, qtbot)
+    x = Path(auto.folders.src) / "X"
+    auto.folders = replace(auto.folders, wav=str(x), auto_wav=str(x))
+    auto.save_auto()
+    assert not auto._auto_saving and not x.exists() and "폴더가 같습니다" in auto.auto_msg.text()
+    auto.run_auto_split()
+    assert auto._auto_worker is None
+
+
+def test_merge_keeps_play_mark_of_other_segment(auto, qtbot, monkeypatch):
+    """V3-4: 다른 구간을 재생하는 중에 합쳐도 그 구간의 ■ 표시를 유지한다."""
+    split_done(auto, qtbot)
+    _three_segs(auto)
+    monkeypatch.setattr(auto.player, "play", lambda *a: True)
+    auto.seg_table.select_row(0)
+    auto.seg_table.playClicked.emit(0)
+    assert auto.seg_table.item(0, segments.COL_PLAY).text() == "■"
+    auto.seg_table.select_row(1)
+    auto.merge_seg(1)                                      # 2·3번을 합친다
+    assert len(auto.segs) == 2 and auto.seg_table.item(0, segments.COL_PLAY).text() == "■"
+
+
+def test_merge_message_when_split_is_stale(auto, qtbot):
+    """V3-6: 다시 인식해 구간이 이전 결과 기준이면 그에 맞게 안내한다."""
+    split_done(auto, qtbot)
+    auto._auto_src_key = "이전 인식"
+    assert auto._auto_stale()
+    auto.seg_table.select_row(0)
+    auto.merge_seg(1)
+    msg = auto.auto_msg.text()
+    assert "이전 인식 결과 기준" in msg and "직접 고친 문장" not in msg
+
+
+def test_save_message_shows_saved_folder(auto, qtbot):
+    """PX-10: 저장 중 폴더를 바꿔도 완료 안내는 저장한 폴더를 보여 준다."""
+    from dataclasses import replace
+    split_done(auto, qtbot)
+    saved_dir = auto.folders.auto_wav_dir
+    auto.save_auto()
+    auto.folders = replace(auto.folders, auto_wav=str(Path(auto.folders.src) / "다른"))
+    qtbot.waitUntil(lambda: not auto._auto_saving, timeout=5000)
+    assert str(saved_dir) in auto.auto_msg.text()

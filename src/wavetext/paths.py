@@ -10,7 +10,7 @@ import json
 import os
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 PART_WAV_RE = re.compile(r"^(?P<base>.+)\.part-(?P<n>\d+)\.wav$", re.IGNORECASE)
@@ -57,6 +57,39 @@ class Folders:
     @property
     def auto_txt_dir(self):
         return self.resolve("auto_txt")
+
+    @classmethod
+    def from_dict(cls, d):
+        """설정 파일의 folders 값으로 만든다. 모르는 키나 문자열이 아닌 값은 무시한다(다른 버전 설정으로도 시작, V3-3)."""
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in (d or {}).items() if k in names and isinstance(v, str)})
+
+
+FOLDER_LABELS = {"full": "원본 음성인식 Text", "wav": "사용자 분할 음성 Wav", "part_txt": "사용자 분할 음성인식 Text",
+                 "auto_wav": "자동 분할 음성 Wav", "auto_txt": "자동 분할 음성인식 Text"}
+
+
+def folder_conflict(folders):
+    """사용자 분할 폴더와 자동 분할 폴더가 겹치면 (사용자 키, 자동 키), 아니면 None.
+    같은 폴더를 쓰면 번호가 겹쳐 자동분할 저장이 사용자 쌍을 덮어쓰거나 지운다(V3-2)."""
+    def norm(p):
+        return os.path.normcase(os.path.abspath(str(p)))
+    try:
+        for m in ("wav", "part_txt"):
+            for a in ("auto_wav", "auto_txt"):
+                if norm(folders.resolve(m)) == norm(folders.resolve(a)):
+                    return m, a
+    except ValueError:  # 원본 음성 폴더가 없으면 비교할 수 없다
+        pass
+    return None
+
+
+def folder_conflict_message(folders):
+    c = folder_conflict(folders)
+    if c is None:
+        return None
+    return (f"'{FOLDER_LABELS[c[0]]}'와 '{FOLDER_LABELS[c[1]]}' 폴더가 같습니다. "
+            "사용자 분할과 자동 분할은 서로 다른 폴더를 쓰세요.")
 
 
 def full_stt_path(folders, base):

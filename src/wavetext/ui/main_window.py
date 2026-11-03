@@ -109,7 +109,7 @@ class MainWindow(QMainWindow):
         self.cfg = cfg
         self.mono_family = mono
         self.stt_factory = stt_factory or SttWorker   # 시험에서 가짜 작업자 주입
-        self.folders = Folders(**cfg.get("folders", {}))
+        self.folders = Folders.from_dict(cfg.get("folders"))
         self.sources = []
         self.infos = {}
         self.counts = {}
@@ -121,6 +121,8 @@ class MainWindow(QMainWindow):
         self._src_words = ([], 0.0)  # ② 글에 해당하는 단어 시간과 시간 보정(선택 구간 인식이면 구간 시작 초)
         self._src_spans = None       # ② 글의 단어별 글자 위치 (글이 바뀌면 다시 계산)
         self._src_offset = 0.0
+        self._src_req_range = None   # 인식 중인 ② 선택 구간 (원본 초). 전체 인식이면 None
+        self._src_range = None       # ② 단어 시간이 덮는 선택 구간 (원본 초). 전체 인식·기록이면 None
         self.cur_pair = -1
         self._src_dirty = False
         self._out_dirty = False
@@ -941,6 +943,7 @@ class MainWindow(QMainWindow):
         self.pairs = []
         self.meta = {"words": [], "parts": {}}
         self._src_words = ([], 0.0)
+        self._src_range = None
         self._auto_set_segs([], None)
         self.cur_pair = -1
         self._render_chips()
@@ -989,6 +992,7 @@ class MainWindow(QMainWindow):
         self.lbl_src_info.setText("")
         self.meta = paths.load_meta(self.folders, p.stem)  # 원본 인식 단어 시간 + 분할 구간
         self._src_words = (self.meta.get("words") or [], 0.0)
+        self._src_range = None
         self._auto_load(p.stem)
         # ③④ 기존 학습용 쌍
         self.pairs = []
@@ -1237,6 +1241,7 @@ class MainWindow(QMainWindow):
         self._src_scope = f"선택 구간 {len(x) / self.audio.rate:.3f}초" if selection_only else f"{len(x) / self.audio.rate:.3f}초 음성"
         self._src_full = not selection_only
         self._src_offset = self.wave.sel[0] if selection_only else 0.0  # 선택 구간 인식의 단어 시간은 구간 시작 기준
+        self._src_req_range = tuple(self.wave.sel) if selection_only else None
         stt = dict(got[0])
         stt["result"] = dict(stt.get("result") or {}, word_alignment=True)  # 단어별 시간 → 선택 구간 문장 가져오기
         self.src_worker = self._start_stt(convert.to_stt_pcm(x, self.audio.rate), (stt, got[1]), "src")
@@ -1293,6 +1298,7 @@ class MainWindow(QMainWindow):
         self._recog_text("음성인식 실행")
         self._set_src_text(text)
         self._src_words = (list(words), self._src_offset)
+        self._src_range = self._src_req_range
         self.src_prog.setValue(1000)
         self.lbl_src_info.setText(self._src_scope)
         if self._src_full:  # 원본 전체 인식 결과는 바로 저장한다(기존 파일 덮어쓰기)
@@ -1384,13 +1390,13 @@ class MainWindow(QMainWindow):
             self.profile = r["profile"]
         # 분할 음성을 다시 인식하지 않고, ② 원본 인식의 단어 시간으로 선택 구간 문장만 가져와 자동 저장한다
         meta = self.meta if here else paths.load_meta(folders, base)
-        text, has_words = self._span_text(*sel, meta=meta)
+        text, why = self._span_text(*sel, meta=meta)
         pair = Pair(r["n"], r["wav"], paths.part_txt_path(folders, base, r["n"]), r["after"], r["before"], t["rate"],
                     sel[0], sel[1], text=text, nr=r["applied"])
-        if has_words:
+        if why is None:
             pair.state = "ok"
         else:
-            pair.state, pair.error = "err", "원본 음성인식 결과(단어 시간)가 없어 문장을 가져오지 못했습니다"
+            pair.state, pair.error = "err", why
         meta.setdefault("parts", {})[str(pair.n)] = [round(sel[0], 3), round(sel[1], 3)]
         try:
             paths.write_text(pair.txt, text)
@@ -1588,6 +1594,9 @@ class MainWindow(QMainWindow):
         self.out_wave.set_audio(src.mean(axis=1) if len(src) else np.zeros(1, np.float32), p.rate)
 
     def delete_pair(self):
+        if self._creating:  # 🗑 단추와 같이 Del·메뉴도 생성 중에는 막는다 (V3-5)
+            self.message("학습용 파일을 만드는 중입니다. 잠시 후 다시 누르세요.")
+            return
         p = self._pair()
         if p is None:
             return
@@ -1695,17 +1704,22 @@ class MainWindow(QMainWindow):
         self.message("② 문장 전체를 가져왔습니다. 필요한 부분만 남기고 [저장]을 누르세요.")
 
     def _span_text(self, t0, t1, meta=None):
-        """원본 t0~t1초 구간 문장과 단어 시간 유무. 원본 전체 인식 기록이 없으면
-        지금 화면의 ② 선택 구간 인식 단어 시간(구간 시작 기준)을 원본 시각으로 바꿔 쓴다."""
+        """원본 t0~t1초 구간 문장과, 가져오지 못했으면 그 이유(가져왔으면 None).
+        원본 전체 인식 기록이 없으면 지금 화면의 ② 선택 구간 인식 단어 시간(구간 시작 기준)을 원본 시각으로 바꿔 쓰되,
+        구간이 그 인식 범위 안에 들어갈 때만 쓴다(범위 밖 문장이 빠진 채 저장되지 않게, V3-1)."""
         meta = self.meta if meta is None else meta
         words = meta.get("words") or []
         if words:
-            return client.words_in(words, t0, t1), True
+            return client.words_in(words, t0, t1), None
         if meta is self.meta:
             words, offset = self._src_words
-            if words:
-                return client.words_in(words, t0, t1, offset), True
-        return "", False
+            rng = self._src_range
+            if words and rng is not None:
+                if rng[0] - 0.001 <= min(t0, t1) and max(t0, t1) <= rng[1] + 0.001:
+                    return client.words_in(words, t0, t1, offset), None
+                return "", (f"② 선택 구간 인식 범위({rng[0]:.3f}~{rng[1]:.3f}초)를 벗어나 단어 시간이 없어 문장을 가져오지 못했습니다. "
+                            "원본 전체를 인식하거나 그 범위 안에서 만드세요")
+        return "", "원본 음성인식 결과(단어 시간)가 없어 문장을 가져오지 못했습니다"
 
     def copy_part_from_src(self):
         """③에서 선택한 학습용 Wave의 원본 구간에 해당하는 ② 문장만 가져온다(단어 시간 사용)."""
@@ -1719,9 +1733,9 @@ class MainWindow(QMainWindow):
         if p.t0 is None:
             self.message("이 학습용 파일은 원본 구간 기록이 없어 구간 문장을 가져올 수 없습니다. [문장 전체 가져오기]를 쓰세요.", error=True)
             return
-        text, has_words = self._span_text(p.t0, p.t1)
-        if not has_words:
-            self.message("② 원본 음성인식을 먼저 실행하세요(단어 시간 정보가 필요합니다).", error=True)
+        text, why = self._span_text(p.t0, p.t1)
+        if why:
+            self.message(f"{why}. ② 원본 음성인식을 먼저 실행하세요.", error=True)
             return
         if not text:
             self.message(f"원본 {p.t0:.3f}~{p.t1:.3f}초 구간에 인식된 문장이 없습니다.", error=True)
@@ -2005,7 +2019,8 @@ class MainWindow(QMainWindow):
         if self._play_seg is a or self._play_seg is b:
             self.player.stop()
         words = self.meta.get("words") or []
-        auto_text = all(" ".join(s.text.split()) == client.words_in(words, s.t0, s.t1) for s in (a, b))
+        stale = self._auto_stale()
+        auto_text = not stale and all(" ".join(s.text.split()) == client.words_in(words, s.t0, s.t1) for s in (a, b))
         a.t0, a.t1 = t0, t1
         a.text = client.words_in(words, t0, t1) if auto_text else " ".join(f"{a.text.strip()} {b.text.strip()}".split())
         a.flag = autosplit.length_flag(t1 - t0)
@@ -2016,13 +2031,21 @@ class MainWindow(QMainWindow):
             autosplit.render(self.audio.samples, self.audio.rate, [a], self._auto_nr, self.profile)
         del self.segs[j]
         self.seg_table.set_segs(self.segs)
+        playing = next((k for k, s in enumerate(self.segs) if s is self._play_seg), None)
+        if playing is not None:  # 다른 구간을 재생 중이면 ■ 표시를 되살린다 (V3-4)
+            self.seg_table.set_playing(playing)
         self.seg_table.select_row(i)
         self._on_seg_edited()
         self._src_spans = None
         self._on_seg_picked(i)
         self._auto_render_missing()
         flag = {"long": " (15초 초과)", "short": " (4초 미만)"}.get(a.flag, "")
-        note = "" if auto_text else " 직접 고친 문장은 이어 붙였으니 들어 보고 확인하세요."
+        if auto_text:
+            note = ""
+        elif stale:  # 다시 인식해 단어가 바뀌었으면 고치지 않은 문장도 새 단어와 달라진다 (V3-6)
+            note = " 구간이 이전 인식 결과 기준이라 두 문장을 그대로 이어 붙였으니 들어 보고 확인하세요."
+        else:
+            note = " 직접 고친 문장은 이어 붙였으니 들어 보고 확인하세요."
         self.message(f"구간 {a.n}과 {b.n}을 합쳐 {fmt_t(t0)} ~ {fmt_t(t1)}({t1 - t0:.1f}초){flag}로 만들었습니다.{note} "
                      "[선택 저장]을 누르면 반영합니다.")
 
@@ -2065,6 +2088,8 @@ class MainWindow(QMainWindow):
             self.message("원본 음성인식이 끝난 뒤 다시 누르세요.")
         elif self._auto_worker is not None or self._auto_saving:
             self.message("구간 작업이 끝난 뒤 다시 누르세요.")
+        elif paths.folder_conflict(self.folders):  # 설정 파일을 직접 고친 경우에도 사용자 쌍을 건드리지 않게 (V3-2)
+            self.message(paths.folder_conflict_message(self.folders) + " [저장 폴더]에서 바꾸세요.", error=True)
         else:
             return False
         return True
@@ -2295,7 +2320,7 @@ class MainWindow(QMainWindow):
         else:
             done = f"학습용 {r['count']}쌍을 저장했습니다" if r["count"] else "해제한 쌍을 삭제했습니다"
             note = " · 쌍 문장은 이전 인식 결과 기준입니다" if w.tag["stale"] else ""
-            self.message(f"{done}{note} · {self.folders.auto_wav_dir}")
+            self.message(f"{done}{note} · {w.tag['key'][0].auto_wav_dir}")  # 저장 중 폴더를 바꿔도 저장한 폴더로 안내 (PX-10)
 
     # ================= 상태 =================
     def _dir_note(self, key):

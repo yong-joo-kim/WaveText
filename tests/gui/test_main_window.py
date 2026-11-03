@@ -307,3 +307,51 @@ def test_delete_icon_next_to_play(win, qtbot, monkeypatch):
     win.btn_out_del.click()
     assert not wav.exists() and win.pairs == []
     assert not win.btn_out_del.isEnabled()
+
+
+def test_selection_stt_text_only_inside_recognized_range(win, qtbot):
+    """V3-1: 선택 구간 인식 단어 시간은 인식 범위 안의 구간에만 쓴다. 벗어나면 문장 없음으로 둔다."""
+    win.wave.set_selection((2.0, 3.0))
+    win.run_src_stt(True)                                   # 2.0~3.0초만 인식 (단어 시간은 2.0초 기준)
+    qtbot.waitUntil(lambda: win.src_worker is None, timeout=3000)
+    win.wave.set_selection((2.0, 5.0))                      # 인식 범위를 벗어남
+    p = make_pair(win, qtbot)
+    assert p.state == "err" and p.text == "" and "범위" in p.error
+    assert "가져오기 필요" in win.out_badge.text()
+    win.copy_part_from_src()
+    assert "범위" in win.st_msg.text() and win.out_text.toPlainText() == ""
+    win.wave.set_selection((2.2, 2.9))                      # 범위 안: w1(2.5~2.8)
+    p2 = make_pair(win, qtbot)
+    assert p2.state == "ok" and p2.text == "w1"
+    win.load_index(1, ask=False)                            # 다른 파일로 가면 선택 구간 인식 결과를 쓰지 않는다
+    assert win._src_range is None and win._span_text(0.0, 1.0)[1] is not None
+
+
+def test_folder_dialog_rejects_same_manual_and_auto_folder(qtbot, tmp_path):
+    """V3-2: 사용자·자동 분할 폴더를 같게 지정하면 적용하지 않고 두 칸을 표시한다."""
+    dlg = dialogs.FolderDialog(Folders(src=str(tmp_path)), None)
+    qtbot.addWidget(dlg)
+    dlg.edits["wav"].setText(str(tmp_path / "X"))
+    dlg.edits["auto_wav"].setText(str(tmp_path / "X"))
+    dlg.accept()
+    assert dlg.result() == 0 and "폴더가 같습니다" in dlg.src_hint.text()
+    assert dlg.edits["wav"].property("error") and dlg.edits["auto_wav"].property("error")
+    assert not dlg.src.property("error")
+    dlg.edits["auto_wav"].setText(str(tmp_path / "Y"))     # 고치면 표시를 지운다
+    assert not dlg.edits["auto_wav"].property("error")
+    dlg.accept()
+    assert dlg.result() == 1
+
+
+def test_delete_blocked_while_creating(win, qtbot, monkeypatch):
+    """V3-5: 생성 중에는 Del·메뉴로도 삭제하지 않는다."""
+    win.wave.set_selection((1.0, 2.0))
+    make_pair(win, qtbot)
+    wav = win.folders.wav_dir / "a_0001.part-1.wav"
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    win._creating = True
+    win.delete_pair()
+    assert wav.exists() and len(win.pairs) == 1 and "만드는 중" in win.st_msg.text()
+    win._creating = False
+    win.delete_pair()
+    assert not wav.exists()

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
                                QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
                                QTreeView, QVBoxLayout)
 
-from wavetext import config
+from wavetext import config, paths
 from wavetext.paths import DEFAULT_SUBDIRS, FOLDER_KEYS, Folders
 from wavetext.ui.workers import HealthWorker
 
@@ -88,6 +88,8 @@ class FolderDialog(QDialog):
             g.addWidget(h, row + 1, 1, 1, 2)
             row += 2
         self.src.textChanged.connect(self._refresh)
+        for e in self.edits.values():  # 고치면 폴더 겹침 표시를 지운다
+            e.textChanged.connect(self._refresh)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("확인")
         buttons.button(QDialogButtonBox.StandardButton.Ok).setProperty("kind", "primary")
@@ -121,10 +123,13 @@ class FolderDialog(QDialog):
             e.setPlaceholderText(f"비우면: {s}\\{DEFAULT_SUBDIRS[key]}")
         self._show_error(None)
 
-    def _show_error(self, msg):
-        _set_prop(self.src, "error", bool(msg))
+    def _show_error(self, msg, on_src=True):
+        _set_prop(self.src, "error", bool(msg) and on_src)
         _set_prop(self.src_hint, "error", bool(msg))
         self.src_hint.setText(msg or SRC_HINT)
+        for e in self.edits.values():
+            if e.property("error"):
+                _set_prop(e, "error", False)
 
     def folders(self):
         return Folders(src=self.src.text().strip().rstrip("\\/"), **{k: self.edits[k].text().strip() for k in FOLDER_KEYS})
@@ -138,6 +143,14 @@ class FolderDialog(QDialog):
         if not Path(src).is_dir():
             self._show_error("원본 음성 폴더가 없습니다. 경로를 확인하세요.")
             self.src.setFocus()
+            return
+        f = self.folders()
+        clash = paths.folder_conflict(f)
+        if clash:
+            self._show_error(paths.folder_conflict_message(f), on_src=False)
+            for k in clash:
+                _set_prop(self.edits[k], "error", True)
+            self.edits[clash[1]].setFocus()
             return
         super().accept()
 
