@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIntValidator
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QGridLayout, QHBoxLayout,
                                QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem,
-                               QVBoxLayout)
+                               QTreeView, QVBoxLayout)
 
 from wavetext import config
 from wavetext.paths import DEFAULT_SUBDIRS, Folders
@@ -25,7 +25,11 @@ def make_folder_dialog(parent, title, start):
                         (QFileDialog.DialogLabel.FileType, "파일 형식"), (QFileDialog.DialogLabel.Accept, "선택"),
                         (QFileDialog.DialogLabel.Reject, "취소")):
         dlg.setLabelText(label, text)
-    dlg.resize(760, 480)
+    dlg.resize(960, 560)
+    tree = dlg.findChild(QTreeView, "treeView")
+    if tree is not None:  # 이름 열이 넓게 잡혀 크기·형식·날짜가 잘리지 않도록
+        for col, width in enumerate((340, 100, 130, 190)):
+            tree.header().resizeSection(col, width)
     return dlg
 
 
