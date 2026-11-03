@@ -256,3 +256,20 @@ def test_wave_click_syncs_src_text(win, qtbot):
     assert win.sync_src_text(0.1) == 0
     win.load_index(1, ask=False)                           # 단어 시간이 없는 파일에서는 아무것도 하지 않음
     assert win.sync_src_text(1.0) is None
+
+
+def test_part_text_from_selection_only_stt(win, qtbot):
+    """원본 전체가 아니라 ② 선택 구간만 인식해도 ④ [선택 구간 문장 가져오기]가 원본 시각에 맞춰 동작한다."""
+    win.wave.set_selection((2.5, 4.0))
+    p = make_pair(win, qtbot)                               # 원본 인식 전 생성 → 문장 없음
+    assert p.state == "err" and p.text == ""
+    win.wave.set_selection((2.0, 5.0))
+    win.run_src_stt(True)                                   # 선택 구간 인식: 단어 시간은 2.0초 기준
+    qtbot.waitUntil(lambda: win.src_worker is None, timeout=3000)
+    assert paths.load_meta(win.folders, "a_0001")["words"] == []   # 전체 인식 기록은 그대로
+    win.copy_part_from_src()
+    # w_i 가운데 = 2.0 + 0.5i + 0.15 → 2.5~4.0초 안: w1 w2 w3
+    assert win.out_text.toPlainText() == "w1 w2 w3"
+    win.wave.set_selection((3.0, 4.5))
+    p2 = make_pair(win, qtbot)                              # 생성할 때도 같은 단어 시간으로 자동 저장
+    assert p2.state == "ok" and paths.read_text(p2.txt) == "w2 w3 w4"

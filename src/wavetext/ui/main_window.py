@@ -1370,11 +1370,10 @@ class MainWindow(QMainWindow):
             self.profile = r["profile"]
         # 분할 음성을 다시 인식하지 않고, ② 원본 인식의 단어 시간으로 선택 구간 문장만 가져와 자동 저장한다
         meta = self.meta if here else paths.load_meta(folders, base)
-        words = meta.get("words") or []
-        text = client.words_in(words, *sel) if words else ""
+        text, has_words = self._span_text(*sel, meta=meta)
         pair = Pair(r["n"], r["wav"], paths.part_txt_path(folders, base, r["n"]), r["after"], r["before"], t["rate"],
                     sel[0], sel[1], text=text, nr=r["applied"])
-        if words:
+        if has_words:
             pair.state = "ok"
         else:
             pair.state, pair.error = "err", "원본 음성인식 결과(단어 시간)가 없어 문장을 가져오지 못했습니다"
@@ -1681,6 +1680,19 @@ class MainWindow(QMainWindow):
         self.out_text.setPlainText(text)  # textChanged → 수정됨 표시
         self.message("② 문장 전체를 가져왔습니다. 필요한 부분만 남기고 [저장]을 누르세요.")
 
+    def _span_text(self, t0, t1, meta=None):
+        """원본 t0~t1초 구간 문장과 단어 시간 유무. 원본 전체 인식 기록이 없으면
+        지금 화면의 ② 선택 구간 인식 단어 시간(구간 시작 기준)을 원본 시각으로 바꿔 쓴다."""
+        meta = self.meta if meta is None else meta
+        words = meta.get("words") or []
+        if words:
+            return client.words_in(words, t0, t1), True
+        if meta is self.meta:
+            words, offset = self._src_words
+            if words:
+                return client.words_in(words, t0, t1, offset), True
+        return "", False
+
     def copy_part_from_src(self):
         """③에서 선택한 학습용 Wave의 원본 구간에 해당하는 ② 문장만 가져온다(단어 시간 사용)."""
         if self._creating:
@@ -1693,11 +1705,10 @@ class MainWindow(QMainWindow):
         if p.t0 is None:
             self.message("이 학습용 파일은 원본 구간 기록이 없어 구간 문장을 가져올 수 없습니다. [문장 전체 가져오기]를 쓰세요.", error=True)
             return
-        words = self.meta.get("words") or []
-        if not words:
+        text, has_words = self._span_text(p.t0, p.t1)
+        if not has_words:
             self.message("② 원본 음성인식을 먼저 실행하세요(단어 시간 정보가 필요합니다).", error=True)
             return
-        text = client.words_in(words, p.t0, p.t1)
         if not text:
             self.message(f"원본 {p.t0:.3f}~{p.t1:.3f}초 구간에 인식된 문장이 없습니다.", error=True)
             return
