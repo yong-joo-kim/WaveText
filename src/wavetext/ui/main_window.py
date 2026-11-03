@@ -1017,8 +1017,9 @@ class MainWindow(QMainWindow):
         for s in (self.sp_start, self.sp_end):
             s.blockSignals(True)
             s.setRange(0, d)
-            s.setValue(0)
             s.blockSignals(False)
+        # 새 파일을 넣으면 파형 선택이 신호 없이 지워지므로 시작·끝·길이 표시를 함께 비운다
+        self._on_selection(self.wave.sel)
 
     def _on_selection(self, sel):
         for s, v in ((self.sp_start, sel[0] if sel else 0), (self.sp_end, sel[1] if sel else 0)):

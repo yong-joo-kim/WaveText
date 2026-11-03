@@ -273,3 +273,14 @@ def test_part_text_from_selection_only_stt(win, qtbot):
     win.wave.set_selection((3.0, 4.5))
     p2 = make_pair(win, qtbot)                              # 생성할 때도 같은 단어 시간으로 자동 저장
     assert p2.state == "ok" and paths.read_text(p2.txt) == "w2 w3 w4"
+
+
+def test_selection_length_resets_on_file_change(win):
+    """다른 파일로 넘어가면 선택 구간 시작·끝과 함께 길이 표시도 비운다."""
+    win.wave.set_selection((1.0, 3.5))
+    assert win.lbl_len.text().startswith("길이 2.500초")
+    win.load_index(1, ask=False)
+    assert win.wave.sel is None
+    assert (win.sp_start.value(), win.sp_end.value()) == (0, 0)
+    assert win.lbl_len.text() == "길이 - (최대 30초)"
+    assert not win.btn_create.isEnabled()
