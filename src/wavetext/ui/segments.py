@@ -1,5 +1,5 @@
 """자동 분할 구간 목록: 쌍마다 저장 선택, 재생, 문장 수정."""
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QTextCursor
 from PySide6.QtWidgets import (QAbstractItemDelegate, QAbstractItemView, QFrame, QHeaderView, QPlainTextEdit, QStyle,
                                QStyledItemDelegate, QStyleOptionViewItem, QTableWidget, QTableWidgetItem)
@@ -67,11 +67,42 @@ class WrapEdit(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # 줄바꿈하므로 가로 스크롤은 필요 없다
         self.setTabChangesFocus(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.document().setDocumentMargin(2)
         # 아래 행 위로 펼쳐지므로 바탕을 채워 아래 글자가 비치지 않게 한다
         self.setStyleSheet(f"QPlainTextEdit {{ background: {C['gray-0']}; border: 2px solid {C['primary-50']}; }}")
+        self._anchor = None   # 편집하는 칸의 자리 (표 안쪽 좌표)
+        self._min_h = 0
+        self.textChanged.connect(self._fit)
+
+    def place(self, rect, min_h):
+        """칸 자리에 놓되, 글 전체가 스크롤 없이 보이게 높이를 늘리고 표 아래로 넘치면 위로 올린다 (V32R-2·3)."""
+        self._anchor = QRect(rect)
+        self._min_h = min_h
+        self._fit()
+
+    def _needed_height(self, width):
+        frame = self.frameWidth() * 2
+        margin = int(self.document().documentMargin() * 2)
+        text_w = max(10, width - frame - margin - 4)
+        fm = self.fontMetrics()
+        box = fm.boundingRect(QRect(0, 0, text_w, 1_000_000), Qt.TextFlag.TextWordWrap, self.toPlainText() or " ")
+        return box.height() + frame + margin + fm.lineSpacing() // 2
+
+    def _fit(self):
+        if self._anchor is None:
+            return
+        r = QRect(self._anchor)
+        h = max(r.height(), self._min_h, self._needed_height(r.width()))
+        area = self.parentWidget()
+        if area is not None:
+            h = min(h, area.height())
+            if r.top() + h > area.height():
+                r.moveTop(max(0, area.height() - h))
+        r.setHeight(h)
+        self.setGeometry(r)
 
     def text(self):
         return self.toPlainText()
@@ -96,10 +127,8 @@ class TextDelegate(QStyledItemDelegate):
         model.setData(index, " ".join(editor.toPlainText().split()))
 
     def updateEditorGeometry(self, editor, option, index):
-        r = option.rect
-        lines = editor.fontMetrics().lineSpacing() * self.MIN_LINES + 8
-        r.setHeight(max(r.height(), lines))  # 짧은 행에서도 몇 줄은 보이게 아래로 펼친다
-        editor.setGeometry(r)
+        lines = editor.fontMetrics().lineSpacing() * self.MIN_LINES + 8  # 짧은 행에서도 몇 줄은 보이게 펼친다
+        editor.place(option.rect, lines)
 
     def eventFilter(self, editor, event):
         if (isinstance(editor, WrapEdit) and event.type() == QEvent.Type.KeyPress

@@ -781,15 +781,19 @@ def test_refilling_many_rows_is_fast(auto, qtbot):
     import numpy as np
     from wavetext.audio.autosplit import Seg
     split_done(auto, qtbot)
-    long_text = " ".join(["긴 문장"] * 60)
-    segs = [Seg(i * 1.0, i * 1.0 + 0.9, long_text if i % 10 == 0 else "짧음", "", i + 1, True,
-                audio=np.zeros((10, 1), np.float32)) for i in range(200)]
+    def make(long_every, word):
+        long_text = " ".join([word] * 60)
+        return [Seg(i * 1.0, i * 1.0 + 0.9, long_text if i % long_every == 0 else "짧음", "", i + 1, True,
+                    audio=np.zeros((10, 1), np.float32)) for i in range(200)]
     t = auto.seg_table
+    t.set_segs(make(10, "긴 문장"))                          # 200행을 한 번 채운 뒤
+    QApplication.processEvents()
     start = time.perf_counter()
-    t.set_segs(segs)
+    t.set_segs(make(7, "다른 문장"))                         # 기존 행을 다른 문장으로 다시 채운다 (V32R-1: 느렸던 경로)
     t.set_playing(150)
     for row in range(0, 200, 20):
         t.update_row(row)
+    QApplication.processEvents()
     assert time.perf_counter() - start < 1.0
     assert t.rowHeight(0) > t.rowHeight(1)                  # 긴 문장 행만 높다
 
@@ -821,3 +825,25 @@ def test_merge_fits_row_height(auto, qtbot):
     auto.merge_seg(1)
     t = auto.seg_table
     assert t.rowHeight(0) >= t.sizeHintForRow(0)
+
+
+def test_editor_shows_all_lines_and_stays_inside_table(auto, qtbot):
+    """V32R-2·3: 긴 문장 편집칸은 스크롤 없이 모든 줄이 보이고, 마지막 행에서도 표 밖으로 나가지 않는다."""
+    split_done(auto, qtbot)
+    t = auto.seg_table
+    auto.auto_dlg.resize(1100, 800)
+    QApplication.processEvents()
+    auto.segs[0].text = " ".join(["아주 긴 문장입니다"] * 30)
+    t.update_row(0)
+    t.edit_row(0)
+    ed = t.indexWidget(t.currentIndex())
+    QApplication.processEvents()
+    assert not ed.verticalScrollBar().isVisible()          # 모든 줄이 보인다
+    t.commit()
+    last = t.rowCount() - 1
+    t.scrollToBottom()
+    t.edit_row(last)
+    ed = t.indexWidget(t.currentIndex())
+    QApplication.processEvents()
+    assert ed.geometry().bottom() <= t.viewport().height()   # 표 아래로 넘치지 않는다
+    assert ed.height() >= ed.fontMetrics().lineSpacing() * 3
