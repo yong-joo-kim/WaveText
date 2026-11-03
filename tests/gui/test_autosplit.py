@@ -764,14 +764,60 @@ def test_long_text_wraps_and_follows_width(auto, qtbot):
     """긴 문장은 '…'로 줄이지 않고 아래 줄로 보이고, 표를 넓히면 줄 수가 줄어 행이 낮아진다."""
     split_done(auto, qtbot)
     t = auto.seg_table
-    assert t.wordWrap() and t.textElideMode() == Qt.TextElideMode.ElideNone
-    auto.segs[0].text = " ".join(["아주 긴 문장입니다"] * 20)
-    t.update_row(0)
+    assert t.textElideMode() == Qt.TextElideMode.ElideNone
     auto.auto_dlg.resize(1100, 800)
     QApplication.processEvents()
-    t.resizeRowsToContents()
+    auto.segs[0].text = " ".join(["아주 긴 문장입니다"] * 20)
+    t.update_row(0)                                         # 표가 스스로 이 행 높이를 맞춘다
     narrow = t.rowHeight(0)
     assert narrow > t.rowHeight(1)                          # 여러 줄
     auto.auto_dlg.resize(1900, 800)
     QApplication.processEvents()
     assert t.rowHeight(0) < narrow                          # 넓히면 옆으로 더 보여 줄 수가 줄어든다
+
+
+def test_refilling_many_rows_is_fast(auto, qtbot):
+    """V32-1: 구간이 많아도 표를 다시 채우는 데 1초 미만이고, 긴 문장 행은 높이가 맞춰진다."""
+    import numpy as np
+    from wavetext.audio.autosplit import Seg
+    split_done(auto, qtbot)
+    long_text = " ".join(["긴 문장"] * 60)
+    segs = [Seg(i * 1.0, i * 1.0 + 0.9, long_text if i % 10 == 0 else "짧음", "", i + 1, True,
+                audio=np.zeros((10, 1), np.float32)) for i in range(200)]
+    t = auto.seg_table
+    start = time.perf_counter()
+    t.set_segs(segs)
+    t.set_playing(150)
+    for row in range(0, 200, 20):
+        t.update_row(row)
+    assert time.perf_counter() - start < 1.0
+    assert t.rowHeight(0) > t.rowHeight(1)                  # 긴 문장 행만 높다
+
+
+def test_text_editor_wraps_and_enter_commits(auto, qtbot):
+    """V32-2: 문장 편집칸도 줄바꿈해 보여 주고, Enter로 확정하면 줄바꿈은 공백이 되며 행 높이를 다시 맞춘다."""
+    split_done(auto, qtbot)
+    t = auto.seg_table
+    t.edit_row(0)
+    ed = t.indexWidget(t.currentIndex())
+    assert isinstance(ed, segments.WrapEdit) and ed.lineWrapMode() == ed.LineWrapMode.WidgetWidth
+    assert ed.height() >= ed.fontMetrics().lineSpacing() * 3      # 짧은 행에서도 몇 줄 보이게 펼친다
+    before = t.rowHeight(0)
+    ed.setPlainText("첫 줄\n" + " ".join(["고친 긴 문장"] * 40))
+    QTest.keyClick(ed, Qt.Key.Key_Return)
+    assert t.state() != t.State.EditingState
+    assert auto.segs[0].text.startswith("첫 줄 고친 긴 문장") and "\n" not in auto.segs[0].text
+    assert t.rowHeight(0) > before
+
+
+def test_merge_fits_row_height(auto, qtbot):
+    """합친 뒤 긴 문장 행 높이가 맞춰진다."""
+    split_done(auto, qtbot)
+    auto.segs[0].text = " ".join(["앞"] * 300)
+    auto.segs[1].text = " ".join(["뒤"] * 300)
+    auto.seg_table.update_row(0)
+    auto.seg_table.update_row(1)
+    auto.seg_table.select_row(0)
+    auto.merge_seg(1)
+    t = auto.seg_table
+    assert t.rowHeight(0) >= t.sizeHintForRow(0)

@@ -1,8 +1,8 @@
 """자동 분할 구간 목록: 쌍마다 저장 선택, 재생, 문장 수정."""
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import (QAbstractItemDelegate, QAbstractItemView, QHeaderView, QStyle, QStyledItemDelegate,
-                               QStyleOptionViewItem, QTableWidget, QTableWidgetItem)
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QTextCursor
+from PySide6.QtWidgets import (QAbstractItemDelegate, QAbstractItemView, QFrame, QHeaderView, QPlainTextEdit, QStyle,
+                               QStyledItemDelegate, QStyleOptionViewItem, QTableWidget, QTableWidgetItem)
 
 from wavetext.audio import segment
 from wavetext.ui.theme import C
@@ -61,6 +61,55 @@ class CheckDelegate(QStyledItemDelegate):
         p.restore()
 
 
+class WrapEdit(QPlainTextEdit):
+    """문장 편집칸: 표에 보이던 대로 줄바꿈해 보여 준다. Enter로 확정, Esc로 취소(표의 위임자가 처리)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setTabChangesFocus(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.document().setDocumentMargin(2)
+        # 아래 행 위로 펼쳐지므로 바탕을 채워 아래 글자가 비치지 않게 한다
+        self.setStyleSheet(f"QPlainTextEdit {{ background: {C['gray-0']}; border: 2px solid {C['primary-50']}; }}")
+
+    def text(self):
+        return self.toPlainText()
+
+    def setText(self, text):
+        self.setPlainText(text)
+
+
+class TextDelegate(QStyledItemDelegate):
+    """문장 칸 편집기(V32-2). 전사는 한 줄이므로 확정할 때 줄바꿈·연속 공백을 공백 하나로 바꾼다."""
+
+    MIN_LINES = 3
+
+    def createEditor(self, parent, option, index):
+        return WrapEdit(parent)
+
+    def setEditorData(self, editor, index):
+        editor.setPlainText(index.data() or "")
+        editor.moveCursor(QTextCursor.MoveOperation.End)
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, " ".join(editor.toPlainText().split()))
+
+    def updateEditorGeometry(self, editor, option, index):
+        r = option.rect
+        lines = editor.fontMetrics().lineSpacing() * self.MIN_LINES + 8
+        r.setHeight(max(r.height(), lines))  # 짧은 행에서도 몇 줄은 보이게 아래로 펼친다
+        editor.setGeometry(r)
+
+    def eventFilter(self, editor, event):
+        if (isinstance(editor, WrapEdit) and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)):
+            self.commitData.emit(editor)
+            self.closeEditor.emit(editor, QAbstractItemDelegate.EndEditHint.NoHint)
+            return True
+        return super().eventFilter(editor, event)
+
+
 class SegmentTable(QTableWidget):
     picked = Signal(int)        # 사용자가 행을 골랐다
     playClicked = Signal(int)
@@ -71,6 +120,7 @@ class SegmentTable(QTableWidget):
         self.segs = []
         self.setHorizontalHeaderLabels(HEADERS)
         self.setItemDelegateForColumn(COL_SAVE, CheckDelegate(self))
+        self.setItemDelegateForColumn(COL_TEXT, TextDelegate(self))
         self.verticalHeader().hide()
         self.setAlternatingRowColors(False)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -82,9 +132,15 @@ class SegmentTable(QTableWidget):
             self.setColumnWidth(col, w)
         head.setSectionResizeMode(COL_TEXT, QHeaderView.ResizeMode.Stretch)
         # 긴 문장은 "…"로 줄이지 않고 아래 줄로 이어 보여 준다. 창을 넓히면 문장 칸이 넓어진 만큼 옆으로 더 보인다.
+        # 행 높이는 칸마다 자동으로 다시 재지 않고(구간 수의 제곱만큼 느려짐, V32-1) 필요한 때만 직접 맞춘다:
+        # 표를 다 채운 뒤, 문장 칸 폭이 바뀔 때, 한 행의 문장이 바뀔 때.
         self.setWordWrap(True)
         self.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._fitted_width = -1
+        self._fit_timer = QTimer(self)  # 창 크기를 끄는 동안 여러 번 재지 않고, 끝난 뒤 한 번 잰다
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.setInterval(0)
+        self._fit_timer.timeout.connect(self._fit_rows_now)
         head.sectionResized.connect(self._fit_rows)
         self.itemChanged.connect(self._item_changed)
         self.currentCellChanged.connect(self._cell_changed)
@@ -92,6 +148,16 @@ class SegmentTable(QTableWidget):
 
     def _fit_rows(self, col, _old, _new):
         if col == COL_TEXT:  # 문장 칸 폭이 바뀌면 줄 수가 달라지므로 행 높이를 다시 맞춘다
+            self._fit_timer.start()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._fit_timer.start()  # 남는 폭을 채우는 문장 칸은 표 크기를 따라 바뀐다
+
+    def _fit_rows_now(self):
+        w = self.columnWidth(COL_TEXT)
+        if w != self._fitted_width:
+            self._fitted_width = w
             self.resizeRowsToContents()
 
     def set_segs(self, segs):
@@ -102,6 +168,8 @@ class SegmentTable(QTableWidget):
             self._fill_row(row, s)
         self.setCurrentCell(-1, -1)
         self.blockSignals(False)
+        self.resizeRowsToContents()  # 다 채운 뒤 한 번만 높이를 맞춘다
+        self._fitted_width = self.columnWidth(COL_TEXT)
 
     @staticmethod
     def _set_check(check, s):
@@ -152,6 +220,7 @@ class SegmentTable(QTableWidget):
         self.item(row, COL_STATE).setText(seg_state(s))
         self.item(row, COL_TEXT).setText(s.text)
         self.blockSignals(False)
+        self.resizeRowToContents(row)
 
     def select_row(self, row):
         """코드에서 행을 고른다: 편집칸을 열지 않고 picked도 보내지 않는다."""
@@ -188,6 +257,7 @@ class SegmentTable(QTableWidget):
             self.blockSignals(True)
             self.item(it.row(), COL_STATE).setText(seg_state(s))
             self.blockSignals(False)
+            self.resizeRowToContents(it.row())  # 고친 문장 길이에 맞춰 이 행만 다시 잰다
         else:
             return
         self.edited.emit()
